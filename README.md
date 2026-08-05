@@ -151,4 +151,4 @@ The supervisor tests cover crash-loop abandonment, unstartable binaries, log
 capture, and the guarantee that background reaping does not steal a foreground
 child's exit code.
 
-**Claude was used for the README.md only!!**
+**Claude was used for the README.md + build.sh script only!!**
