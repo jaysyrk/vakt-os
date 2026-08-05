@@ -1,43 +1,48 @@
-## Layer 1: Security Hardening and Isolation
-- [ ] **Enforce Read-Only Root Filesystem**
-  - [ ] Modify build.sh to mark the rootfs partition as read-only (ro).
-  - [ ] Update vakt-init to mount a volatile tmpfs over /tmp and /run during bootstrap.
-- [ ] **Privilege Drop Engine**
-  - [ ] Implement user and group creation (vakt user) in the base image.
-  - [ ] Update vakt-init to use setuid and setgid system calls to drop root privileges before launching vakt-panel.
-- [ ] **Landlock LSM Sandboxing (Zig & Rust implementation)**
-  - [ ] Integrate the landlock crate into vakt-net to restrict filesystem access exclusively to /persistent/etc/vakt-net.conf.
-  - [ ] **[ZIG]** Implement a lightweight Landlock sandboxing C-ABI library in Zig (`libvakt_sandbox.a`) using raw `linux_syscalls` to block all file access except for `/dev/fb0`. Link this directly into `vakt-compositor` (Rust).
+## Layer 1: Hardware Abstraction & Bootstrapping (HAL)
+- [ ] **Multiboot2 Entry & Long Mode Setup**
+  - [ ] **[ZIG]** Write the assembly stub and aligned Multiboot2 header to transition the CPU from 32-bit to 64-bit Long Mode.
+  - [ ] Create a `linker.ld` script to map kernel code sections strictly at the 1MB physical boundary.
+- [ ] **CPU Tables & Interrupt Handling**
+  - [ ] **[ZIG]** Initialize the Global Descriptor Table (GDT) setting up privilege rings (Ring 0 for Kernel, Ring 3 for Userland).
+  - [ ] **[ZIG]** Configure the Interrupt Descriptor Table (IDT) to capture hardware ticks and keyboard presses.
 
-## Layer 2: Package Manager Updates (zrpkg)
-- [ ] **Enforce Cryptographic Trust**
-  - [ ] Remove the fallback warning behavior for unverified packages.
-  - [ ] Refactor zrpkg to explicitly abort installation if an Ed25519 signature validation fails.
-- [ ] **Dependency Graph Resolution**
-  - [ ] Expand the package .json schema to include a dependencies string array.
-  - [ ] Implement a simple Directed Acyclic Graph (DAG) solver in Rust to fetch and install prerequisites sequentially.
-- [ ] **Clean Uninstallation Engine**
-  - [ ] Modify zrpkg install to generate a local manifest file tracking every unpacked file path.
-  - [ ] Implement zrpkg remove <name> to parse the manifest and safely delete package files.
+## Layer 2: Memory & Process Management
+- [ ] **Freestanding Memory Allocators**
+  - [ ] **[ZIG]** Parse Multiboot2 tags to build a Physical Page Frame Allocator (Buddy/Bitmap).
+  - [ ] **[RUST]** Implement page tables for virtual memory allocation and back a `#![no_std]` heap allocator (Slab).
+- [ ] **Preemptive Scheduler**
+  - [ ] **[RUST]** Implement a thread tracking system and a Task Scheduler inside the kernel core.
+  - [ ] **[ZIG]** Write the naked-assembly context-switch routines to save and restore CPU registers on timer ticks.
 
-## Layer 3: Init System and Process Supervisor (vakt-init)
-- [ ] **Daemon Readiness Notifications**
-  - [ ] Create a lightweight Unix domain socket mechanism inside /run/init.sock.
-  - [ ] Modify background daemons to send a readiness signal (READY=1) so vakt-init knows exactly when to draw the TUI panel.
-- [ ] **Graceful System Shutdown Sequence**
-  - [ ] Trap SIGINT, SIGTERM, and SIGPWR in vakt-init's primary event loop.
-  - [ ] Send SIGTERM to all supervised PIDs, await exit codes, sync disks, and safely unmount /persistent.
-- [ ] **Supervisor Log Rotation (Zig Shared Engine)**
-  - [ ] **[ZIG]** Build a freestanding, zero-allocation log streaming clamp engine (`vakt-rotator`) in Zig. 
-  - [ ] Embed the Zig log rotator engine directly into `vakt-init` via FFI to truncate or rotate `/run/<name>.log` when it hits a 5MB capacity clamp, preventing volatile RAM exhaustion.
+## Layer 3: System Calls & Kernel IPC (The Bridge)
+- [ ] **MSR Syscall Interface**
+  - [ ] **[ZIG]** Program `IA32_LSTAR` to route the x86_64 `syscall` instruction cleanly from Ring 3 into the kernel.
+  - [ ] **[RUST]** Map raw registers into an internal system call array (`sys_write`, `sys_fork`, `sys_exec`, `sys_ipc`).
 
-## Layer 4: Infrastructure and Automation
-- [ ] **Self-Contained Kernel Configuration**
-  - [ ] Extract a minimal, monolithic kernel configuration (.config) stripping out unused drivers.
-  - [ ] Save the configuration to build-system/kernel.config and update build.sh to compile it directly.
-- [ ] **Unified Polyglot Build Orchestration**
-  - [ ] **[ZIG]** Replace the host-dependent, pacman-locked bash logic with a root-level `build.zig` master script.
-  - [ ] Configure `zig build` to cross-compile the kernel config, invoke `cargo` via `std.ChildProcess` for the Rust components, compile the Go panel tools, and package the static `vakt-os.iso`.
-- [ ] **Automated CI/CD Pipeline**
-  - [ ] Create .github/workflows/build.yml.
-  - [ ] Configure a GitHub Actions workflow that provisions the Zig toolchain, builds the entire multi-language stack via `zig build`, runs tests, and exports the final ISO as a release artifact.
+## Layer 4: Custom Init System & Supervisor
+- [ ] **Porting vakt-init to Vakt-Core**
+  - [ ] **[RUST]** Rewrite `vakt-init` using standard `#![no_std]` without any Linux headers or `glibc` dependencies.
+  - [ ] **[RUST]** Implement custom `syscall!` wrapper macros to substitute standard Linux kernel communication.
+- [ ] **Microkernel Service Supervisor**
+  - [ ] **[RUST]** Establish an IPC listener that spawns, monitors, and restarts your background userland daemons.
+
+## Layer 5: Graphics & Storage Porting
+- [ ] **Vakt Framebuffer UI Engine**
+  - [ ] **[ZIG]** Expose a simple linear graphics framebuffer interface from the kernel.
+  - [ ] **[RUST]** Update `vakt-compositor` to draw UI pixels directly to this kernel-allocated video memory block.
+- [ ] **The Go Runtime User-Space Compatibility Port**
+  - [ ] **[GO]** Configure Go to compile targeting an entirely freestanding Unix environment (cross-compile via `TinyGo` or customized targets to completely strip out host OS expectations).
+  - [ ] **[GO]** Map Go's low-level system call wrappers to call your custom `sys_write` and `sys_ipc` assembly stubs instead of standard Linux system calls.
+
+## Layer 6: High-Level Appliance Applications
+- [ ] **The Vakt Panel UI (vakt-panel)**
+  - [ ] **[GO]** Adapt your core appliance TUI management panel (`tview`) to stream inputs and outputs through your custom system call vectors.
+- [ ] **Security Auditing Engine (vakt-audit)**
+  - [ ] **[GO]** Write the file-integrity and metric logging programs in Go, utilizing Go's speed for structural parsing and networking.
+
+## Layer 7: Cross-Language Build Infrastructure
+- [ ] **The Universal build.zig Orchestrator**
+  - [ ] **[ZIG]** Configure `zig build` to build the Zig hardware initialization.
+  - [ ] **[ZIG]** Trigger `cargo build --target x86_64-unknown-none` for the Kernel Core, `vakt-init`, and `vakt-compositor`.
+  - [ ] **[ZIG]** Invoke `go build` / `tinygo` to generate static userland assets, mapping them directly into an isolated RamFS block.
+  - [ ] Link them all together into a final, unified bootable image (`vakt_os.iso`).
