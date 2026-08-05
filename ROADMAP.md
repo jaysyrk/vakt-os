@@ -1,4 +1,4 @@
-###Full kernal making
+##*Making full kernal*
 ## Layer 1: Hardware Abstraction & Bootstrapping (HAL)
 - [ ] **Multiboot2 Entry & Long Mode Setup**
   - [ ] **[ZIG]** Write the assembly stub and aligned Multiboot2 header to transition the CPU from 32-bit to 64-bit Long Mode.
