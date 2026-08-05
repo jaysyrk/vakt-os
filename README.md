@@ -1,6 +1,6 @@
 # Vakt OS
 
-[Readme](README.md) | [Roadmap](ROADMAP.md) | [Contributing](CONTRIBUTING.md)
+[Readme](README.md) | [Roadmap](ROADMAP.md) 
 
 
 **Claude was used for the README.md formatting + build.sh script only!!**
