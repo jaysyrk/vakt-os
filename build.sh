@@ -94,14 +94,32 @@ fi
 echo ""
 echo "[Step 1/4] Compiling Vakt OS software"
 echo "----------------------------------------"
-build_as_user() { sudo -u "${SUDO_USER:-root}" "$@"; }
+
+# Compiling as the invoking user keeps cargo and go caches out of root's home,
+# where they would be unusable next time and owned by the wrong account.
+#
+# When there is nobody to drop to - a container, or root logged in directly -
+# run the command as we are rather than going through sudo. sudo resets the
+# environment, so a build already running as the target user would silently
+# lose anything the caller had set.
+build_as_user() {
+    if [ -z "${SUDO_USER:-}" ] || [ "${SUDO_USER}" = "root" ]; then
+        "$@"
+    else
+        sudo -u "$SUDO_USER" "$@"
+    fi
+}
 
 (cd "$PROJECT_ROOT/pkg-manager"      && build_as_user cargo build --release)
 (cd "$PROJECT_ROOT/vakt-init"        && build_as_user cargo build --release)
 (cd "$PROJECT_ROOT/vakt-net"         && build_as_user cargo build --release)
 (cd "$PROJECT_ROOT/vakt-compositor"  && build_as_user cargo build --release)
+# -buildvcs=false: go otherwise runs git to stamp each binary with the commit
+# and whether the tree is dirty, which makes two builds of identical sources
+# produce different bytes, and fails outright when the checkout is not one this
+# user owns. Nothing in the image reads the stamp.
 (cd "$PROJECT_ROOT/tools" && for tool in vakt-audit vakt-ids vakt-panel zrpkg-server; do
-    build_as_user go build -o "bin/$tool" "./cmd/$tool/"
+    build_as_user go build -buildvcs=false -o "bin/$tool" "./cmd/$tool/"
 done)
 
 echo ""

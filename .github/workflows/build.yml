@@ -13,6 +13,13 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# The build scripts use brace expansion and other bash features. In a container
+# job GitHub picks the first shell it finds, which is not guaranteed to be bash,
+# so say so rather than depending on what the image happens to ship.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   # Fast feedback. Everything here runs in seconds and catches the mistakes
   # that are not worth a twenty-minute kernel compile to discover.
@@ -25,6 +32,9 @@ jobs:
         run: pacman -Syu --noconfirm git rust go base-devel
 
       - uses: actions/checkout@v4
+
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -69,7 +79,7 @@ jobs:
         run: |
           set -eu
           cargo build --release --manifest-path pkg-manager/Cargo.toml
-          go build -C tools -o "$PWD/tools/bin/zrpkg-server" ./cmd/zrpkg-server/
+          go build -C tools -buildvcs=false -o "$PWD/tools/bin/zrpkg-server" ./cmd/zrpkg-server/
           ZRPKG="$PWD/pkg-manager/target/release/zrpkg"
           WORK=$(mktemp -d)
           mkdir -p "$WORK"/{repo,stage,root}
@@ -159,6 +169,9 @@ jobs:
             bc flex bison openssl perl xz e2fsprogs
 
       - uses: actions/checkout@v4
+
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Cache cargo registry
         uses: actions/cache@v4
