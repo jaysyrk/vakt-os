@@ -1,6 +1,7 @@
 # Vakt OS
 
-[![Code](https://shields.io)](#) [Readme](README.md) | [Roadmap](ROADMAP.md) | [Contributing](CONTRIBUTING.md)
+### [Readme](README.md) &nbsp;|&nbsp; [Roadmap](ROADMAP.md) &nbsp;|&nbsp; [Contributing](CONTRIBUTING.md)
+---
 
 A Linux security appliance built from scratch — custom init, package manager,
 TUI, service supervisor, and framebuffer compositor, written in Rust and Go.
