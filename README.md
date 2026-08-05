@@ -1,157 +1,97 @@
-# Vakt OS
+# Vakt OS (`Vakt-Core`)
 
 [Readme](README.md) | [Roadmap](ROADMAP.md) 
 
+A secure, high-performance polyglot operating system built completely from scratch. It features a custom microkernel, safe memory and process supervisors, a native raw framebuffer UI engine, and an isolated user-space application runtime.
 
-**Claude was used for the README.md formatting + build.sh script only!!**
+There is no Linux kernel, no GNU/glibc userland, and no host distribution underlying this system. It boots directly into 64-bit Long Mode on bare metal.
 
-A Linux security appliance built from scratch — custom init, package manager,
-TUI, service supervisor, and framebuffer compositor, written in Rust and Go.
+<html>
+<pre>
+GRUB (Multiboot2) → boot.S (32-to-64b transition) → kmain (Zig HAL)
+                                                      │
+                                                      ├── Initializes GDT, IDT, Syscall (MSR)
+                                                      ├── Hands off to Memory & Task Scheduler (Rust)
+                                                      └── Spawns User-Space Supervisor (Rust PID 1)
+                                                            │
+                                                            ├── vakt-init (Supervises userland)
+                                                            ├── vakt-compositor (Direct UI drawing)
+                                                            └── vakt-panel (Go TUI Application)
+</pre>
+</html>
 
-There is no systemd, no glibc userland, and no distro underneath it. The image
-is a statically-linked busybox rootfs, a Rust program as PID 1, and the tools
-in this repository.
+## Architecture & Layers
 
-```
-GRUB → vmlinuz → initramfs → /init (vakt-init, Rust)
-                                │
-                                ├── mounts /proc /sys /dev, /dev/sda → /persistent
-                                ├── supervises background services
-                                │     ├── vakt-net   (Wi-Fi + DHCP)
-                                │     └── vakt-ids   (filesystem integrity)
-                                └── runs vakt-panel (TUI) on the console
-                                          └── vakt-compositor (raw /dev/fb0)
-```
-
-## Components
-
-| Component | Language | Role |
-|---|---|---|
-| `vakt-init` | Rust | PID 1. Mounts filesystems, mounts the persistent disk, supervises services, runs the panel. |
-| `vakt-net` | Rust | Brings up networking asynchronously so boot never blocks on a radio. |
-| `vakt-ids` | Go | Host intrusion detection: SHA-256 baseline of watched paths, reports tampering. |
-| `vakt-panel` | Go | tview TUI — the appliance's primary interface. |
-| `vakt-audit` | Go | CIS-style compliance checks. |
-| `vakt-compositor` | Rust | Draws directly to `/dev/fb0` via mmap. No X11, no Wayland. |
-| `zrpkg` | Rust | Package manager: fetch, verify ed25519 signature, unpack. |
-| `zrpkg-server` | Go | Host-side HTTP repository server. |
+| Layer | Component | Language | Role |
+|---|---|---|---|
+| **Layer 1: HAL** | `boot.S` / `main.zig` | Zig / ASM | Multiboot2 validation, 64-bit Long Mode transition, GDT/IDT management. |
+| **Layer 2: Memory** | `vakt-kernel` | Rust | Buddy/Bitmap physical allocator, Slab virtual memory heap (`#![no_std]`), Preemptive Scheduler. |
+| **Layer 3: IPC** | `MSR Bridge` | Zig / Rust | Maps `IA32_LSTAR` register to route `syscall` instructions into the system call array. |
+| **Layer 4: Supervisor**| `vakt-init` | Rust | Freestanding PID 1 supervisor using custom `syscall!` macros instead of standard Linux headers. |
+| **Layer 5: Graphics** | `vakt-compositor` | Zig / Rust | Kernel exposes a linear graphics framebuffer interface; Rust draws UI pixels via direct memory mapping. |
+| **Layer 5: Userland** | `Go Runtime Port` | Go / TinyGo | Cross-compiled freestanding Unix environment with system call wrappers mapped to raw custom assembly stubs. |
+| **Layer 6: Appliance** | `vakt-panel` | Go | Freestanding `tview` TUI adapted to stream inputs/outputs through custom system call vectors. |
+| **Layer 6: Security** | `vakt-audit` | Go | Performance-optimized file-integrity, structural parsing, and metrics engine. |
 
 ## Building
 
-Requires an Arch host (the build script uses `pacman`), root, and a kernel at
-`/boot/vmlinuz-linux` — the ISO reuses the host kernel and its modules.
+The entire polyglot compilation workflow is orchestrated directly by Zig's build system. It coordinates the Rust bare-metal targets, the Go userland binaries, and compiles the core HAL code.
 
-```bash
-sudo ./build.sh
-```
+### Prerequisites
+Ensure you have the Zig compiler, Rust target `x86_64-unknown-none`, and `tinygo` (or a configured Go cross-compiler) installed on your host system.
 
-This compiles everything, builds and signs the package repository, assembles
-the rootfs, and produces `vakt-os.iso` plus a 256MB `vakt-data.img`.
+### Trigger the Orchestrator
+<html>
+<pre><code>
+zig build
+</code></pre>
+</html>
 
-The data disk is **not** recreated if it already exists, because it holds your
-Wi-Fi credentials, installed packages, and the IDS baseline. Delete it by hand
-to start clean.
+This single command:
+1. Compiles the Zig assembly bootstrap and hardware initialization routines.
+2. Triggers `cargo build --target x86_64-unknown-none` for the core kernel, supervisor, and graphics engine.
+3. Invokes `go build`/`tinygo` targeting a freestanding environment, mapping user-space apps into an isolated `RamFS` block.
+4. Links all components together into a single, unified, bootable `vakt_os.iso` image.
 
 ## Running
 
-Serve the package repository from the host first:
+Boot the unified image inside QEMU. Because the operating system is built from the ground up, no host kernel modules or external root filesystems are required:
 
-```bash
-./tools/bin/zrpkg-server -dir tools/repo
-```
+<html>
+<pre><code>
+qemu-system-x86_64 \
+    -m 2G \
+    -cdrom vakt_os.iso \
+    -cpu max \
+    -vga std
+</code></pre>
+</html>
 
-Then boot. The data disk must be the first drive so it lands on `/dev/sda`,
-and QEMU user networking puts the host at `10.0.2.2`:
+## System Internals
 
-```bash
-qemu-system-x86_64 -m 2G \
-    -drive file=vakt-data.img,format=raw,index=0,media=disk \
-    -cdrom vakt-os.iso \
-    -netdev user,id=n0 -device e1000,netdev=n0
-```
+### 1. Hardware Abstraction & Bootstrapping (Zig/ASM)
+The bootloader maps the kernel code sections strictly at the **1MB physical boundary** using a custom `linker.ld` script. The CPU transitions from 32-bit Protected Mode into 64-bit Long Mode by setting up temporary page tables, enabling PAE, and activating the LM-bit in the EFER MSR. Once in 64-bit mode, segment registers are cleared and control jumps directly into Zig's freestanding `kmain`.
 
-## Networking
+### 2. Freestanding Memory & Preemptive Scheduling (Rust)
+The kernel parses the Multiboot2 tags provided by the bootloader to build a Physical Page Frame Allocator. Virtual memory is managed using page tables that back a safe, `#![no_std]` heap allocator (Slab). The thread tracking system and Task Scheduler run continuously inside the kernel core, while Zig naked-assembly context-switch routines save and restore CPU registers on timer ticks.
 
-Boot does not prompt for anything. `vakt-net` runs in the background and:
+### 3. Custom System Call Bridge (MSR)
+User-space communication is achieved by programming the x86_64 `IA32_LSTAR` Model Specific Register. When a Ring 3 application calls `syscall`, the execution is routed directly into the kernel's central system call array, exposing safe primitives like `sys_write`, `sys_fork`, `sys_exec`, and `sys_ipc`.
 
-- with **no configuration**, requests DHCP on `eth0` — which is what lets a
-  fresh VM reach the package repository immediately under QEMU;
-- with a configuration at `/persistent/etc/vakt-net.conf`, associates with the
-  named Wi-Fi network and then requests a lease.
+### 4. Microkernel Service Supervisor (Rust PID 1)
+`vakt-init` acts as the system's root supervisor. It uses an IPC listener to spawn, monitor, and restart background userland daemons. It tracks misbehaving processes, logs application output, and prevents broken binaries from falling into infinite crash-spin loops.
 
-Write that file from the panel's **Wi-Fi Setup** page, or by hand:
+## Repository Layout
 
-```ini
-ssid=MyNetwork
-psk=hunter2
-interface=wlan0
-```
-
-The daemon polls the file's modification time, so saving it triggers a
-reconnect with no restart needed. Current state is published to
-`/run/vakt-net.status` and shown on the panel's Network page.
-
-## Packages
-
-`zrpkg` fetches `<name>.zrp` and `<name>.json` over HTTP, verifies the archive
-against an ed25519 signature, and unpacks it into `$ZRPKG_ROOT`
-(`/persistent/zrpkg`, so installs survive reboots). `vakt-init` puts
-`$ZRPKG_ROOT/usr/bin` on `PATH`.
-
-```
-zrpkg update              # list what the repository offers
-zrpkg install vakt-audit  # fetch, verify, install
-```
-
-Build the repository on the host with:
-
-```bash
-./build-system/mkrepo.sh
-```
-
-It generates a signing key on first run at `build-system/keys/repo.key`,
-signs each package, and writes `tools/repo/`. `build.sh` copies the matching
-public key into the image as `/etc/vakt/trusted.key`.
-
-> **The private key is gitignored and is not in this repository.** A fresh
-> clone generates its own on the first `mkrepo.sh` run. If no trust anchor is
-> present, `zrpkg` warns loudly and installs unverified; if one is present, a
-> package failing verification is deleted rather than unpacked.
-
-## Services
-
-`vakt-init` is a small service supervisor. Each service gets a PID file at
-`/run/<name>.pid` and its output captured to `/run/<name>.log`; the supervisor
-restarts daemons that die and gives up on any that crash more than five times
-in sixty seconds, so a broken binary can never become a spin loop. A summary
-is written to `/run/services.status` for the panel's Services page.
-
-It reaps children with a per-PID `try_wait()` rather than a wildcard
-`waitpid(-1)`. As PID 1 it could reap everything, but the main thread collects
-`vakt-panel`'s exit status with `Command::status()`, and a wildcard reaper
-would race that call and swallow the result.
-
-## Layout
-
-```
-build.sh                  Full ISO build
-build-system/mkrepo.sh    Builds and signs the package repository
-build-system/             Kernel config, bootstrap, logo
-pkg-manager/              zrpkg (Rust)
-vakt-init/                PID 1 and the service supervisor (Rust)
-vakt-net/                 Networking daemon (Rust)
-vakt-compositor/          Framebuffer compositor (Rust)
-tools/cmd/                Go tools: panel, audit, ids, repo server
-```
-
-## Tests
-
-```bash
-cargo test --manifest-path vakt-init/Cargo.toml   # supervisor behaviour
-cargo test --manifest-path vakt-net/Cargo.toml    # config parsing
-cd tools && go test ./cmd/...                     # panel status rendering
-```
-
-The supervisor tests cover crash-loop abandonment, unstartable binaries, log
-capture, and the guarantee that background reaping does not steal a foreground
-child's exit code.
+<html>
+<pre>
+build.zig                 Universal cross-language build orchestrator
+src/hal/                  Zig entry points, boot.S, GDT, IDT initialization
+src/kernel/               Rust #![no_std] memory allocators and scheduler
+src/ipc/                  MSR system call router and assembly stubs
+src/init/                 vakt-init freestanding supervisor (Rust)
+src/compositor/           Vakt graphics framebuffer UI engine (Rust)
+src/userland/panel/       Go-based tview TUI management panel
+src/userland/audit/       Go-based file-integrity auditing engine
+</pre>
+</html>
