@@ -1,6 +1,6 @@
 # Vakt OS
 
-[![Readme](https://shields.io)](README.md) [![Roadmap](https://shields.io)](ROADMAP.md) [![Contributing](https://shields.io)](CONTRIBUTING.md)
+### [Readme](README.md) &nbsp;|&nbsp; [Roadmap](ROADMAP.md) &nbsp;|&nbsp; [Contributing](CONTRIBUTING.md)
 ---
 
 **Claude was used for the README.md + build.sh script only!!**
