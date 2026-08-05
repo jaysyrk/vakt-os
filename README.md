@@ -103,6 +103,13 @@ Two kernel modes:
 sudo VAKT_KERNEL=host ./build.sh   # skip the kernel compile
 ```
 
+To ship an image that already knows where its packages live, name the
+repository at build time:
+
+```bash
+sudo VAKT_REPO_URL=https://packages.example.com ./build.sh
+```
+
 The data disk is **not** recreated if it already exists, because it holds your
 Wi-Fi credentials, installed packages, and the IDS baseline. Delete it by hand
 to start clean.
@@ -114,6 +121,9 @@ Serve the package repository from the host first:
 ```bash
 ./tools/bin/zrpkg-server -dir tools/repo
 ```
+
+(Or point the appliance at a repository on a server you rent, and skip this —
+see [Remote repositories](#remote-repositories).)
 
 Then boot. The data disk must be the first drive so it lands on `/dev/sda`,
 and QEMU user networking puts the host at `10.0.2.2`:
@@ -185,6 +195,8 @@ zrpkg update              # list what the repository offers
 zrpkg install vakt-audit  # resolve, fetch, verify, install
 zrpkg verify vakt-audit   # check the signature without installing
 zrpkg remove vakt-audit   # delete exactly what the install created
+zrpkg repo                # show where packages come from
+zrpkg repo <url>          # fetch from somewhere else from now on
 ```
 
 **Trust is mandatory.** The trust anchor is `/etc/vakt/trusted.key`, put there
@@ -219,6 +231,49 @@ public key into the image as `/etc/vakt/trusted.key`.
 > **The private key is gitignored and is not in this repository.** A fresh
 > clone generates its own on the first `mkrepo.sh` run, which means an image
 > built from a fresh clone will not install packages signed by anyone else's.
+
+### Remote repositories
+
+The `10.0.2.2` default is the QEMU host — right for developing on a laptop,
+wrong for anything deployed. An appliance in the field fetches from a server,
+and that has to be changeable without rebuilding the image.
+
+Four places are consulted, most specific first:
+
+| | |
+|---|---|
+| `ZRPKG_REPO_URL` | one-off overrides and scripts |
+| `/persistent/etc/zrpkg.conf` | the data disk — what `zrpkg repo` and the panel write, survives reboots |
+| `/etc/vakt/zrpkg.conf` | baked in by `VAKT_REPO_URL=…  ./build.sh` |
+| built-in | the QEMU host |
+
+From the panel's **Packages** page, or a shell:
+
+```bash
+zrpkg repo https://packages.example.com
+zrpkg update
+```
+
+**The repository URL is not a trust decision.** Packages are verified against
+`/etc/vakt/trusted.key` whatever server served them, so pointing this at a
+hostile mirror gets you failed signature checks, not compromised packages. What
+plain HTTP does leak is *which* packages you fetch, to anyone on the path —
+which is why `zrpkg-server` can terminate TLS itself, and why the panel says so
+when you set an `http://` URL.
+
+`zrpkg-server` is built to be exposed: read-only methods, a flat namespace so
+traversal has nowhere to resolve to, only `.zrp` and `.json` served, no
+directory listings, bounded timeouts, and a `SIGTERM` that drains in-flight
+downloads rather than truncating them.
+
+**[`deploy/`](deploy/README.md)** has the rest: a hardened systemd unit, an
+nginx reverse-proxy snippet, TLS both ways round, and `publish.sh`, which signs
+locally and rsyncs only the signed output — the signing key never reaches the
+server.
+
+```bash
+./deploy/publish.sh user@vps.example.com
+```
 
 ## Services
 
@@ -295,6 +350,7 @@ vakt-init/                  PID 1, supervisor, readiness, shutdown (Rust)
 vakt-net/                   Networking daemon (Rust)
 vakt-compositor/            Framebuffer compositor (Rust)
 tools/cmd/                  Go tools: panel, audit, ids, repo server
+deploy/                     Running the repository on a server you rent
 .github/workflows/build.yml CI: tests, package pipeline, ISO artifact
 ```
 
@@ -304,7 +360,7 @@ tools/cmd/                  Go tools: panel, audit, ids, repo server
 cargo test --manifest-path vakt-init/Cargo.toml    # supervisor, logs, readiness, shutdown
 cargo test --manifest-path pkg-manager/Cargo.toml  # graph, trust, install, removal
 cargo test --manifest-path vakt-net/Cargo.toml     # config parsing, notification
-cd tools && go test ./cmd/...                      # panel status rendering
+cd tools && go test ./cmd/...                      # panel rendering, repository server
 ```
 
 CI runs all of these on `archlinux:latest`, then drives the package manager

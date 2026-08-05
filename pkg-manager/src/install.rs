@@ -8,6 +8,7 @@
 //! verification. A package that cannot be verified is not installed, and the
 //! download is deleted rather than left on disk for someone to run by hand.
 
+use crate::config;
 use crate::db::{Database, InstalledPackage, now};
 use crate::fetch::{download_package, verify_signature};
 use crate::manifest::PackageManifest;
@@ -64,13 +65,17 @@ pub struct Installer {
 
 impl Installer {
     pub fn new(root: &Path) -> Self {
+        let repository = config::load();
         Installer {
             client: Client::new(),
-            repo_url: std::env::var("ZRPKG_REPO_URL")
-                .unwrap_or_else(|_| "http://10.0.2.2:8080".to_string()),
+            repo_url: repository.repo_url,
             root: root.to_path_buf(),
             database: Database::new(root),
         }
+    }
+
+    pub fn repository(&self) -> &str {
+        &self.repo_url
     }
 
     /// Installs `requested` and everything they depend on.

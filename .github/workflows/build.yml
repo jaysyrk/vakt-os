@@ -59,7 +59,7 @@ jobs:
           go test ./cmd/...
 
       - name: Shell scripts parse
-        run: bash -n build.sh build-system/*.sh
+        run: bash -n build.sh build-system/*.sh deploy/*.sh
 
       # The package pipeline end to end, against a repository served over HTTP
       # exactly as the VM would see it: pack and sign three packages in a

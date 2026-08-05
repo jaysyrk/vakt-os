@@ -16,6 +16,10 @@ set -eu
 #   VAKT_KERNEL=host     reuse /boot/vmlinuz-linux and the host's modules and
 #                        firmware. Much larger, but boots on hardware the custom
 #                        kernel has no driver for.
+#   VAKT_REPO_URL=...    bake a package repository URL into the image, for an
+#                        appliance that should already know where to fetch from.
+#                        Defaults to the QEMU host. Anything written to the data
+#                        disk later overrides it. See deploy/README.md.
 # ==============================================================================
 
 if [ "$EUID" -ne 0 ]; then
@@ -28,6 +32,9 @@ ROOTFS="/tmp/vakt-rootfs"
 ISO_DIR="/tmp/vakt-iso"
 OUT_ISO="$PROJECT_ROOT/vakt-os.iso"
 VAKT_KERNEL="${VAKT_KERNEL:-custom}"
+# The QEMU host under user networking. Override to ship an image pointed at a
+# repository on a server you run.
+VAKT_REPO_URL="${VAKT_REPO_URL:-http://10.0.2.2:8080}"
 
 # The unprivileged account the panel runs as. vakt-init drops to it before
 # handing over the console, so nothing the user interacts with is root.
@@ -54,8 +61,14 @@ ESSENTIAL_APPLETS="sh ls cp mv rm cat echo mkdir rmdir pwd mount umount vi ps ki
 echo "========================================"
 echo "    Building Vakt OS                    "
 echo "========================================"
-echo "Kernel: $VAKT_KERNEL"
+echo "Kernel:     $VAKT_KERNEL"
+echo "Repository: $VAKT_REPO_URL"
 echo ""
+
+case "$VAKT_REPO_URL" in
+    http://*|https://*) ;;
+    *) echo "[!] VAKT_REPO_URL must start with http:// or https://"; exit 1 ;;
+esac
 
 # Copies a binary into the rootfs along with every shared library it needs.
 copy_deps() {
@@ -174,6 +187,18 @@ if [ -f "$PROJECT_ROOT/build-system/keys/repo.pub" ]; then
 else
     echo "[!] No repository public key found; zrpkg will refuse to install packages."
 fi
+
+# Where to fetch from. This is deployment configuration, not a trust decision:
+# packages are verified against the key above whatever server served them.
+# /persistent/etc/zrpkg.conf on the data disk overrides this, which is what the
+# panel and `zrpkg repo` write.
+echo "[+] Pointing zrpkg at $VAKT_REPO_URL..."
+cat > "$ROOTFS/etc/vakt/zrpkg.conf" <<EOF
+# Vakt OS package repository, baked in at build time.
+# Override on a running system with 'zrpkg repo <url>' or the panel's
+# Packages page, which write /persistent/etc/zrpkg.conf.
+repo_url=$VAKT_REPO_URL
+EOF
 
 # --- Networking stack --------------------------------------------------------
 echo "[+] Extracting the Wi-Fi stack..."

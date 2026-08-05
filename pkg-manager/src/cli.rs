@@ -23,6 +23,12 @@ pub enum Commands {
     },
     /// List what the repository offers.
     Update,
+    /// Show the repository this system fetches from, or point it at another.
+    Repo {
+        /// New repository URL, e.g. https://packages.example.com. Omit to show
+        /// the current setting and where it came from.
+        url: Option<String>,
+    },
     /// Download a package and check its signature without installing it.
     Verify { package: String },
     /// Build and sign a .zrp archive from a directory.

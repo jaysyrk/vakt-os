@@ -1,0 +1,69 @@
+# systemd unit for the Vakt OS package repository on a rented server.
+#
+#   install -m 0755 zrpkg-server /usr/local/bin/
+#   useradd --system --home-dir /var/lib/zrpkg --create-home zrpkg
+#   install -m 0644 zrpkg-server.service /etc/systemd/system/
+#   systemctl enable --now zrpkg-server
+#
+# The repository is public data - packages are signed, and clients verify them
+# against their own trust anchor - so there is no authentication here and
+# nothing on this machine worth stealing. That is only true as long as the
+# signing key stays on the build machine and never reaches this one.
+#
+# For TLS, either put a reverse proxy in front (see deploy/README.md) or pass
+# -tls-cert and -tls-key below and let this serve HTTPS directly.
+
+[Unit]
+Description=Vakt OS package repository
+Documentation=https://github.com/jaysyrk/vakt-os
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=zrpkg
+Group=zrpkg
+ExecStart=/usr/local/bin/zrpkg-server -dir /var/lib/zrpkg/repo -addr 127.0.0.1:8080
+Restart=on-failure
+RestartSec=5s
+
+# The server drains in-flight downloads on SIGTERM, so a restart does not turn
+# a half-finished fetch into a truncated archive the client reports as a
+# signature failure. Give it room to finish.
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+
+# This process reads files out of one directory and writes them to sockets.
+# Everything below takes away something it has no use for.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+
+# Read-only: the repository is published to this directory by something else,
+# never written by the server.
+ReadOnlyPaths=/var/lib/zrpkg/repo
+
+# Only needed when serving TLS directly rather than behind a proxy. Binding 443
+# also needs AmbientCapabilities=CAP_NET_BIND_SERVICE, or a proxy.
+# ReadOnlyPaths=/etc/letsencrypt
+
+[Install]
+WantedBy=multi-user.target

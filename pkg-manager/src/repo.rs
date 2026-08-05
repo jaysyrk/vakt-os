@@ -18,15 +18,23 @@ pub struct RepoIndex {
 
 /// Fetches the repository index and lists what is available to install.
 pub async fn sync_repos() -> Result<()> {
-    let repo_url =
-        std::env::var("ZRPKG_REPO_URL").unwrap_or_else(|_| "http://10.0.2.2:8080".to_string());
-    println!("Syncing package database from {}...", repo_url);
+    let repository = crate::config::load();
+    println!(
+        "Syncing package database from {} (set in {})...",
+        repository.repo_url, repository.source
+    );
 
     let body = reqwest::Client::new()
-        .get(format!("{}/index.json", repo_url))
+        .get(format!("{}/index.json", repository.repo_url))
         .send()
         .await
-        .context("Failed to reach repository (is zrpkg-server running on the host?)")?
+        .with_context(|| {
+            format!(
+                "Failed to reach {}. Check the server is running and reachable; \
+                 change it with 'zrpkg repo <url>' or the panel's Packages page.",
+                repository.repo_url
+            )
+        })?
         .error_for_status()
         .context("Repository has no index.json")?
         .text()

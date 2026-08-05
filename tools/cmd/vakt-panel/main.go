@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -80,13 +81,44 @@ func main() {
 		runInto(pkgView, "zrpkg", "install", name)
 	})
 
+	// The repository is deployment configuration, not part of the build: an
+	// appliance in the field talks to a server somewhere, and the root
+	// filesystem is read-only, so this is the only way to change it without a
+	// shell. It is saved next to the network configuration on the data disk.
+	repoInput := tview.NewInputField().
+		SetLabel(" Repository: ").
+		SetText(readRepoURL()).
+		SetFieldWidth(40)
+
+	saveRepoBtn := tview.NewButton("Save Repository").SetSelectedFunc(func() {
+		pkgView.Clear()
+		url, path, err := writeRepoURL(repoInput.GetText())
+		if err != nil {
+			fmt.Fprintf(pkgView, "[red]%v[-]\n", err)
+			return
+		}
+		repoInput.SetText(url)
+		fmt.Fprintf(pkgView, "[green]Repository set to %s[-]\n", url)
+		fmt.Fprintf(pkgView, "Saved to %s\n\n", path)
+		if strings.HasPrefix(url, "http://") {
+			fmt.Fprint(pkgView, "[yellow]This is plain HTTP. Signatures still protect what\n"+
+				"you install, but anyone on the path can see what you install.[-]\n\n")
+		}
+		fmt.Fprint(pkgView, "Choose List Available to see what it offers.\n")
+	})
+
 	pkgControls := tview.NewFlex().
 		AddItem(pkgInput, 36, 0, true).
 		AddItem(installPkgBtn, 0, 1, false).
 		AddItem(listPkgBtn, 0, 1, false)
 
+	repoControls := tview.NewFlex().
+		AddItem(repoInput, 54, 0, false).
+		AddItem(saveRepoBtn, 0, 1, false)
+
 	pkgFlex := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(pkgControls, 3, 1, true).
+		AddItem(repoControls, 1, 0, false).
 		AddItem(pkgView, 0, 4, false)
 
 	pages.AddPage("Packages", pkgFlex, true, false)

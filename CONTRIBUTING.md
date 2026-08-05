@@ -47,7 +47,7 @@ for c in pkg-manager vakt-init vakt-net vakt-compositor; do
 done
 gofmt -l tools            # must print nothing
 cd tools && go vet ./...
-bash -n build.sh build-system/*.sh
+bash -n build.sh build-system/*.sh deploy/*.sh
 ```
 
 ## Writing code here
@@ -87,6 +87,7 @@ reason better than convenience.
 | `vakt-compositor/` | Framebuffer rendering |
 | `tools/cmd/` | The Go tools: panel, audit, IDS, repository server |
 | `build-system/` | Kernel configuration and builder, repository builder, logo |
+| `deploy/` | Running the repository on a rented server: systemd unit, publish script |
 | `build.sh` | Assembles the rootfs and the ISO |
 
 ## Adding a package to the repository
