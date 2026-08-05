@@ -1,0 +1,21 @@
+# --- Secrets -----------------------------------------------------------------
+# repo.key is the private ed25519 key that signs packages this OS trusts.
+build-system/keys/
+
+# --- Build outputs -----------------------------------------------------------
+target/
+tools/bin/
+tools/vakt-audit
+
+# Generated package repository (rebuild with build-system/mkrepo.sh)
+tools/repo/
+
+# --- Images ------------------------------------------------------------------
+# The ISO is ~720MB, well over GitHub's 100MB per-file limit.
+*.iso
+# Persistent data disk: holds Wi-Fi credentials and installed packages.
+*.img
+
+# --- Editor / OS -------------------------------------------------------------
+*.swp
+.DS_Store
