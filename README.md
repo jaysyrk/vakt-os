@@ -3,6 +3,8 @@
 ### [Readme](README.md) &nbsp;|&nbsp; [Roadmap](ROADMAP.md) &nbsp;|&nbsp; [Contributing](CONTRIBUTING.md)
 ---
 
+**Claude was used for the README.md + build.sh script only!!**
+
 A Linux security appliance built from scratch — custom init, package manager,
 TUI, service supervisor, and framebuffer compositor, written in Rust and Go.
 
@@ -153,5 +155,3 @@ cd tools && go test ./cmd/...                     # panel status rendering
 The supervisor tests cover crash-loop abandonment, unstartable binaries, log
 capture, and the guarantee that background reaping does not steal a foreground
 child's exit code.
-
-**Claude was used for the README.md + build.sh script only!!**
