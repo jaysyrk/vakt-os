@@ -5,9 +5,9 @@
 - [ ] **Privilege Drop Engine**
   - [ ] Implement user and group creation (vakt user) in the base image.
   - [ ] Update vakt-init to use setuid and setgid system calls to drop root privileges before launching vakt-panel.
-- [ ] **Landlock LSM Sandboxing**
+- [ ] **Landlock LSM Sandboxing (Zig & Rust implementation)**
   - [ ] Integrate the landlock crate into vakt-net to restrict filesystem access exclusively to /persistent/etc/vakt-net.conf.
-  - [ ] Apply Landlock restrictions to vakt-compositor, blocking all file access except for /dev/fb0.
+  - [ ] **[ZIG]** Implement a lightweight Landlock sandboxing C-ABI library in Zig (`libvakt_sandbox.a`) using raw `linux_syscalls` to block all file access except for `/dev/fb0`. Link this directly into `vakt-compositor` (Rust).
 
 ## Layer 2: Package Manager Updates (zrpkg)
 - [ ] **Enforce Cryptographic Trust**
@@ -27,14 +27,17 @@
 - [ ] **Graceful System Shutdown Sequence**
   - [ ] Trap SIGINT, SIGTERM, and SIGPWR in vakt-init's primary event loop.
   - [ ] Send SIGTERM to all supervised PIDs, await exit codes, sync disks, and safely unmount /persistent.
-- [ ] **Supervisor Log Rotation**
-  - [ ] Add a capacity clamp (e.g., 5MB limit) to the supervisor's stdout/stderr stream reader.
-  - [ ] Truncate or rotate /run/<name>.log to prevent malformed or verbose daemons from exhausting volatile RAM.
+- [ ] **Supervisor Log Rotation (Zig Shared Engine)**
+  - [ ] **[ZIG]** Build a freestanding, zero-allocation log streaming clamp engine (`vakt-rotator`) in Zig. 
+  - [ ] Embed the Zig log rotator engine directly into `vakt-init` via FFI to truncate or rotate `/run/<name>.log` when it hits a 5MB capacity clamp, preventing volatile RAM exhaustion.
 
 ## Layer 4: Infrastructure and Automation
 - [ ] **Self-Contained Kernel Configuration**
   - [ ] Extract a minimal, monolithic kernel configuration (.config) stripping out unused drivers.
   - [ ] Save the configuration to build-system/kernel.config and update build.sh to compile it directly.
+- [ ] **Unified Polyglot Build Orchestration**
+  - [ ] **[ZIG]** Replace the host-dependent, pacman-locked bash logic with a root-level `build.zig` master script.
+  - [ ] Configure `zig build` to cross-compile the kernel config, invoke `cargo` via `std.ChildProcess` for the Rust components, compile the Go panel tools, and package the static `vakt-os.iso`.
 - [ ] **Automated CI/CD Pipeline**
   - [ ] Create .github/workflows/build.yml.
-  - [ ] Configure a GitHub Actions workflow using an Arch Linux container (archlinux:latest) to build the project, run tests, and export vakt-os.iso as a release artifact.
+  - [ ] Configure a GitHub Actions workflow that provisions the Zig toolchain, builds the entire multi-language stack via `zig build`, runs tests, and exports the final ISO as a release artifact.
