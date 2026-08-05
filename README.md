@@ -2,9 +2,6 @@
 
 [Readme](README.md) | [Roadmap](ROADMAP.md) | [Contributing](CONTRIBUTING.md)
 
-
-**Claude was used for the README.md + build.sh script only!!**
-
 A Linux security appliance built from scratch — custom init, package manager,
 TUI, service supervisor, and framebuffer compositor, written in Rust and Go.
 
@@ -13,40 +10,98 @@ is a statically-linked busybox rootfs, a Rust program as PID 1, and the tools
 in this repository.
 
 ```
-GRUB → vmlinuz → initramfs → /init (vakt-init, Rust)
+GRUB → vmlinuz → initramfs → /init (vakt-init, Rust, PID 1)
                                 │
-                                ├── mounts /proc /sys /dev, /dev/sda → /persistent
+                                ├── mounts /proc /sys /dev, tmpfs over /run and /tmp
+                                ├── mounts /dev/sda → /persistent
+                                ├── remounts / read-only
                                 ├── supervises background services
-                                │     ├── vakt-net   (Wi-Fi + DHCP)
+                                │     ├── vakt-net   (Wi-Fi + DHCP, Landlock sandboxed)
                                 │     └── vakt-ids   (filesystem integrity)
-                                └── runs vakt-panel (TUI) on the console
-                                          └── vakt-compositor (raw /dev/fb0)
+                                ├── waits for them on /run/init.sock
+                                └── drops to uid 1000 and runs vakt-panel (TUI)
+                                          └── vakt-compositor (raw /dev/fb0, Landlock sandboxed)
 ```
 
 ## Components
 
 | Component | Language | Role |
 |---|---|---|
-| `vakt-init` | Rust | PID 1. Mounts filesystems, mounts the persistent disk, supervises services, runs the panel. |
+| `vakt-init` | Rust | PID 1. Mounts filesystems, seals the root, supervises services, drops privileges, shuts the system down. |
 | `vakt-net` | Rust | Brings up networking asynchronously so boot never blocks on a radio. |
 | `vakt-ids` | Go | Host intrusion detection: SHA-256 baseline of watched paths, reports tampering. |
-| `vakt-panel` | Go | tview TUI — the appliance's primary interface. |
+| `vakt-panel` | Go | tview TUI — the appliance's primary interface. Runs unprivileged. |
 | `vakt-audit` | Go | CIS-style compliance checks. |
 | `vakt-compositor` | Rust | Draws directly to `/dev/fb0` via mmap. No X11, no Wayland. |
-| `zrpkg` | Rust | Package manager: fetch, verify ed25519 signature, unpack. |
+| `zrpkg` | Rust | Package manager: resolve dependencies, fetch, verify ed25519 signature, unpack, uninstall. |
 | `zrpkg-server` | Go | Host-side HTTP repository server. |
+
+## Security model
+
+Four things hold the system together. Each of them is enforced by the kernel
+rather than by convention, which is the only kind of enforcement worth having.
+
+**The root filesystem is read-only.** The initramfs is unpacked into RAM, and
+once `vakt-init` has finished with it there is nothing left to write, so it is
+remounted `ro`. Everything writable is mounted over the top: `/run` and `/tmp`
+are `nosuid,nodev,noexec` tmpfs with size caps, and `/persistent` is the data
+disk, mounted `nosuid,nodev`. `/etc/resolv.conf` and `/etc/mtab` are symlinks
+into `/run` and `/proc`, because DHCP and `mount` expect to write them.
+
+**The panel is not root.** `vakt-init` stays root, but it launches the panel
+through `setgroups`/`setgid`/`setuid` to uid 1000 (`vakt`), verifying afterwards
+that uid 0 is genuinely unreachable. The console devices and the writable paths
+the panel needs — its home on the tmpfs, the package install root, the directory
+holding the network configuration — are handed over explicitly and nothing else
+is. The package install root is deliberately *not* on PID 1's `PATH`: it is
+writable by an unprivileged user, so a binary planted there must never be a
+candidate for something root would run.
+
+Booting the *Vakt OS (root recovery shell)* GRUB entry adds `vakt.rootshell` to
+the kernel command line, which gives the fallback shell root when the panel
+exits. That is for repairing an image whose panel will not start.
+
+**Two daemons confine themselves with Landlock.** `vakt-compositor` restricts
+itself to `/dev/fb0` and nothing else — the ruleset is applied before the device
+is opened, so if it were wrong the compositor would fail immediately rather than
+quietly run unconfined. `vakt-net` keeps read and execute on the image's program
+directories (it drives `ip`, `wpa_supplicant` and `udhcpc`, and the ruleset is
+inherited by all of them), read and write on `/run`, and read on exactly one
+path under `/persistent`: its own configuration file. The rest of the data disk
+— installed packages, the IDS baseline — is unreachable from the daemon that
+talks to the network. Landlock is applied best-effort, so a kernel without it
+degrades to unsandboxed and says so in the log; the supplied kernel
+configuration builds it in and the GRUB entry puts it in the LSM stack.
+
+**Packages must be signed.** There is no unverified install path. If the image
+has no trust anchor, or the archive does not verify against it, `zrpkg` deletes
+the download and stops. See [Packages](#packages).
 
 ## Building
 
-Requires an Arch host (the build script uses `pacman`), root, and a kernel at
-`/boot/vmlinuz-linux` — the ISO reuses the host kernel and its modules.
+Requires an Arch host (the build script uses `pacman`) and root.
 
 ```bash
 sudo ./build.sh
 ```
 
 This compiles everything, builds and signs the package repository, assembles
-the rootfs, and produces `vakt-os.iso` plus a 256MB `vakt-data.img`.
+the rootfs, builds a kernel, and produces `vakt-os.iso` plus a 256MB
+`vakt-data.img`.
+
+Two kernel modes:
+
+| | `VAKT_KERNEL=custom` (default) | `VAKT_KERNEL=host` |
+|---|---|---|
+| Kernel | Built from `build-system/kernel.config` | `/boot/vmlinuz-linux` from the host |
+| Modules | None — monolithic | The host's `/lib/modules` and `/lib/firmware` |
+| Size | Small | Large; the firmware tree alone is hundreds of MB |
+| Hardware | QEMU and common wired x86-64 | Whatever the host kernel supports |
+| Build time | Long the first time; the source tree is cached | Seconds |
+
+```bash
+sudo VAKT_KERNEL=host ./build.sh   # skip the kernel compile
+```
 
 The data disk is **not** recreated if it already exists, because it holds your
 Wi-Fi credentials, installed packages, and the IDS baseline. Delete it by hand
@@ -70,6 +125,30 @@ qemu-system-x86_64 -m 2G \
     -netdev user,id=n0 -device e1000,netdev=n0
 ```
 
+## The kernel
+
+`build-system/kernel.config` is a seed, not a finished `.config`.
+`build-system/mkkernel.sh` feeds it to `make allnoconfig KCONFIG_ALLCONFIG=…`,
+which starts every symbol in the tree at "no" and enables only what the seed
+asks for plus its dependencies. Nothing is stripped, because nothing
+unasked-for was ever turned on.
+
+`CONFIG_MODULES` is off. Every driver is built in, there is no module loader to
+attack, and the image has no `/lib/modules` or `/lib/firmware` to ship — which
+is most of the reason the ISO is small.
+
+The seed is split at an `OPTIONAL` marker. Everything above it is checked
+against the generated `.config` afterwards and the build **fails** listing
+anything that did not survive, because a symbol silently dropped for a missing
+dependency is an unbootable image and should not be discovered in QEMU.
+Everything below it is exploit mitigations, whose names drift between releases
+(the Spectre options became `CONFIG_MITIGATION_*` in 6.8); those are applied
+where they exist and reported where they do not.
+
+```bash
+KERNEL_VERSION=6.12.41 KERNEL_SHA256=<sha> ./build-system/mkkernel.sh
+```
+
 ## Networking
 
 Boot does not prompt for anything. `vakt-net` runs in the background and:
@@ -91,17 +170,40 @@ The daemon polls the file's modification time, so saving it triggers a
 reconnect with no restart needed. Current state is published to
 `/run/vakt-net.status` and shown on the panel's Network page.
 
+The stock kernel configuration builds in the 802.11 stack but no chipset
+drivers, since each one needs its own firmware. Add yours to
+`build-system/kernel.config`, or use `VAKT_KERNEL=host`.
+
 ## Packages
 
 `zrpkg` fetches `<name>.zrp` and `<name>.json` over HTTP, verifies the archive
 against an ed25519 signature, and unpacks it into `$ZRPKG_ROOT`
-(`/persistent/zrpkg`, so installs survive reboots). `vakt-init` puts
-`$ZRPKG_ROOT/usr/bin` on `PATH`.
+(`/persistent/zrpkg`, so installs survive reboots).
 
 ```
 zrpkg update              # list what the repository offers
-zrpkg install vakt-audit  # fetch, verify, install
+zrpkg install vakt-audit  # resolve, fetch, verify, install
+zrpkg verify vakt-audit   # check the signature without installing
+zrpkg remove vakt-audit   # delete exactly what the install created
 ```
+
+**Trust is mandatory.** The trust anchor is `/etc/vakt/trusted.key`, put there
+by `build.sh`. With no key, or with an archive that fails verification, the
+download is deleted and the install stops — there is no warn-and-continue path.
+
+**Dependencies are a graph.** A manifest may name the packages it needs; those
+manifests name theirs. `zrpkg` fetches the reachable set, topologically sorts it
+so nothing is unpacked before what it depends on, and reports a cycle by naming
+the loop rather than recursing into it. Already-installed packages at the same
+version are skipped.
+
+**Removal is exact.** Installing records every path the archive produced in
+`$ZRPKG_ROOT/var/lib/zrpkg/<name>.json`, and `zrpkg remove` works only from that
+list — nothing is deleted for looking like it belongs to a package. Recorded
+paths are re-validated before they are touched, so a crafted archive cannot
+record `../../etc/passwd` at install time and have removal act on it later, and
+deletion never follows a symlink. Removing a package another one still depends
+on is refused unless you pass `--force`.
 
 Build the repository on the host with:
 
@@ -110,13 +212,13 @@ Build the repository on the host with:
 ```
 
 It generates a signing key on first run at `build-system/keys/repo.key`,
-signs each package, and writes `tools/repo/`. `build.sh` copies the matching
+signs each package, writes `tools/repo/`, and records each package's
+dependencies in the manifest and the index. `build.sh` copies the matching
 public key into the image as `/etc/vakt/trusted.key`.
 
 > **The private key is gitignored and is not in this repository.** A fresh
-> clone generates its own on the first `mkrepo.sh` run. If no trust anchor is
-> present, `zrpkg` warns loudly and installs unverified; if one is present, a
-> package failing verification is deleted rather than unpacked.
+> clone generates its own on the first `mkrepo.sh` run, which means an image
+> built from a fresh clone will not install packages signed by anyone else's.
 
 ## Services
 
@@ -128,30 +230,124 @@ is written to `/run/services.status` for the panel's Services page.
 
 It reaps children with a per-PID `try_wait()` rather than a wildcard
 `waitpid(-1)`. As PID 1 it could reap everything, but the main thread collects
-`vakt-panel`'s exit status with `Command::status()`, and a wildcard reaper
-would race that call and swallow the result.
+`vakt-panel`'s exit status itself, and a wildcard reaper would race that call
+and swallow the result.
+
+### Readiness
+
+`/run/init.sock` is a Unix datagram socket that daemons use to say they have
+finished starting. Boot waits there instead of guessing a delay, so the panel is
+drawn when the system is actually usable — and does not wait at all for a
+service that has already failed to start.
+
+The format is the same shape as systemd's `sd_notify`: newline-separated
+`KEY=value` pairs in one datagram, which costs a client about fifteen lines and
+no library.
+
+```
+READY=1
+STATUS=10.0.2.15 on eth0
+```
+
+The sender is identified by the credentials the kernel attaches to the datagram
+(`SO_PASSCRED`), not by anything in the message body, so one service cannot
+report readiness on another's behalf. The socket is `root:vakt` mode 0660, which
+is also how the unprivileged panel is able to send `SHUTDOWN=poweroff`.
+
+### Log rotation
+
+`/run` is a tmpfs, so every byte a daemon logs is a byte of RAM that does not
+come back. Service output is piped through a writer with a 5 MB budget per
+service: the active log rotates to `<name>.log.1` at half the budget and a fresh
+one starts, so a daemon stuck printing an error cannot exhaust memory, and the
+last thing it said before dying is still there.
+
+### Shutdown
+
+The kernel applies no default signal dispositions to PID 1, so a signal that
+would end any other process is discarded by init unless it is handled. Signals
+are blocked process-wide at startup and read off a `signalfd` on a dedicated
+thread, which removes the async-signal-safety question rather than working
+around it.
+
+| Signal | Action | Sent by |
+|---|---|---|
+| `SIGTERM`, `SIGINT` | reboot | busybox `reboot`; ctrl-alt-del |
+| `SIGPWR`, `SIGUSR2` | power off | busybox `poweroff` |
+| `SIGUSR1` | halt | busybox `halt` |
+
+Whatever the trigger — a signal, or `SHUTDOWN=` on the init socket from the
+panel's Power page — the same sequence runs: end the console session, SIGTERM
+every supervised daemon and wait (SIGKILL after five seconds), `sync`, unmount
+`/persistent`, then `reboot(2)`. `vakt-init` also disables the kernel's own
+ctrl-alt-del handling at boot, so that key combination goes through this
+sequence instead of cutting power to a mounted disk.
 
 ## Layout
 
 ```
-build.sh                  Full ISO build
-build-system/mkrepo.sh    Builds and signs the package repository
-build-system/             Kernel config, bootstrap, logo
-pkg-manager/              zrpkg (Rust)
-vakt-init/                PID 1 and the service supervisor (Rust)
-vakt-net/                 Networking daemon (Rust)
-vakt-compositor/          Framebuffer compositor (Rust)
-tools/cmd/                Go tools: panel, audit, ids, repo server
+build.sh                    Full ISO build
+build-system/mkkernel.sh    Builds the monolithic kernel
+build-system/mkrepo.sh      Builds and signs the package repository
+build-system/kernel.config  Kernel configuration seed
+pkg-manager/                zrpkg (Rust)
+vakt-init/                  PID 1, supervisor, readiness, shutdown (Rust)
+vakt-net/                   Networking daemon (Rust)
+vakt-compositor/            Framebuffer compositor (Rust)
+tools/cmd/                  Go tools: panel, audit, ids, repo server
+.github/workflows/build.yml CI: tests, package pipeline, ISO artifact
 ```
 
 ## Tests
 
 ```bash
-cargo test --manifest-path vakt-init/Cargo.toml   # supervisor behaviour
-cargo test --manifest-path vakt-net/Cargo.toml    # config parsing
-cd tools && go test ./cmd/...                     # panel status rendering
+cargo test --manifest-path vakt-init/Cargo.toml    # supervisor, logs, readiness, shutdown
+cargo test --manifest-path pkg-manager/Cargo.toml  # graph, trust, install, removal
+cargo test --manifest-path vakt-net/Cargo.toml     # config parsing, notification
+cd tools && go test ./cmd/...                      # panel status rendering
 ```
 
-The supervisor tests cover crash-loop abandonment, unstartable binaries, log
-capture, and the guarantee that background reaping does not steal a foreground
-child's exit code.
+CI runs all of these on `archlinux:latest`, then drives the package manager
+end to end against a real repository server — pack and sign a three-package
+dependency chain, install the top one, confirm the graph was walked in order,
+confirm a tampered archive is refused, confirm removal is refused while
+something still depends on the package — and finally builds the ISO and
+uploads it as an artifact. Tagging `v*` publishes it as a release asset,
+because the image is well over what the repository will hold.
+
+## Third-party components
+
+Almost everything here is written from scratch; these are the pieces that are
+not, and where they come from.
+
+**Shipped in the image**
+
+| Component | Source | Licence |
+|---|---|---|
+| busybox 1.35.0 (static, musl) | [busybox.net prebuilt binary](https://www.busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox), pinned by SHA-256 in `build.sh` | GPL-2.0 |
+| Linux kernel | [kernel.org](https://kernel.org), configured by `build-system/kernel.config` | GPL-2.0 |
+| GRUB | Arch host package, used by `grub-mkrescue` | GPL-3.0 |
+| wpa_supplicant, wpa_passphrase | Arch host package ([w1.fi](https://w1.fi/wpa_supplicant/)) | BSD-3-Clause |
+| CA certificate bundle | Arch host `ca-certificates` | MPL-2.0 |
+
+**Rust dependencies** — `nix` (syscalls), `landlock` (LSM sandboxing), `clap`,
+`anyhow`, `tokio`, `reqwest`, `serde`/`serde_json`, `ed25519-dalek`, `sha2`,
+`hex`, `tar`, `flate2`, `libc`, `memmap2`. Exact versions are in each crate's
+`Cargo.toml` and `Cargo.lock`.
+
+**Go dependencies** — [`rivo/tview`](https://github.com/rivo/tview) and
+[`gdamore/tcell`](https://github.com/gdamore/tcell) for the panel TUI, and their
+transitive dependencies. See `tools/go.mod`.
+
+**Designs borrowed rather than code**
+
+- The readiness protocol on `/run/init.sock` reuses the wire format of
+  systemd's [`sd_notify`](https://www.freedesktop.org/software/systemd/man/sd_notify.html).
+  No systemd code or library is involved; the format is `KEY=value` lines and
+  the implementations here are a few dozen lines in Rust and Go.
+- The hardening options below the `OPTIONAL` marker in `build-system/kernel.config`
+  follow the [Kernel Self Protection Project](https://kernsec.org/wiki/index.php/Kernel_Self_Protection_Project/Recommended_Settings)
+  recommended settings.
+
+**CI** — `actions/checkout`, `actions/cache`, `actions/upload-artifact`, and
+[`softprops/action-gh-release`](https://github.com/softprops/action-gh-release).

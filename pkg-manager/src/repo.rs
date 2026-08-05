@@ -1,30 +1,19 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Repository {
-    pub name: String,
-    pub url: String,
-    pub public_key: String,
-}
-
 /// A single entry in the repository's `index.json`, written by mkrepo.sh.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IndexEntry {
     pub name: String,
     pub version: String,
     pub description: String,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RepoIndex {
     pub packages: Vec<IndexEntry>,
-}
-
-pub fn add_repo(name: &str, url: &str, _public_key: &str) -> Result<()> {
-    println!("Adding repository '{}': {}", name, url);
-    // Write to /etc/vakt/repos.d/
-    Ok(())
 }
 
 /// Fetches the repository index and lists what is available to install.
@@ -53,6 +42,15 @@ pub async fn sync_repos() -> Result<()> {
     println!("\n{} package(s) available:\n", index.packages.len());
     for pkg in &index.packages {
         println!("  {:<18} {:<8} {}", pkg.name, pkg.version, pkg.description);
+        if !pkg.dependencies.is_empty() {
+            // Listed for information only; install pulls them in by itself.
+            println!(
+                "  {:<18} {:<8} requires {}",
+                "",
+                "",
+                pkg.dependencies.join(", ")
+            );
+        }
     }
     println!("\nInstall with: zrpkg install <name>");
 

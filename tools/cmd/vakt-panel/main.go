@@ -194,6 +194,43 @@ func main() {
 
 	pages.AddPage("IDS", idsFlex, true, false)
 
+	// --- 8. Power ---
+	// The panel runs unprivileged and cannot signal PID 1, so shutting down
+	// goes through vakt-init's control socket. Doing it any other way would
+	// cut power with the data disk still mounted.
+	powerResult := tview.NewTextView().SetDynamicColors(true)
+	powerResult.SetBorder(true).SetTitle(" Power ")
+
+	requestPower := func(verb, describe string) {
+		powerResult.Clear()
+		if err := requestShutdown(verb); err != nil {
+			fmt.Fprintf(powerResult, "[red]%s failed: %v[-]\n\n", describe, err)
+			fmt.Fprint(powerResult, "From a root shell, busybox 'poweroff' and 'reboot'\n"+
+				"signal vakt-init directly.\n")
+			return
+		}
+		fmt.Fprintf(powerResult, "[yellow]%s requested.[-]\n\n", describe)
+		fmt.Fprint(powerResult, "vakt-init is stopping services, flushing disks and\n"+
+			"unmounting /persistent before the system goes down.\n")
+	}
+
+	powerOffBtn := tview.NewButton("Power Off").SetSelectedFunc(func() {
+		requestPower("poweroff", "Power off")
+	})
+	rebootBtn := tview.NewButton("Reboot").SetSelectedFunc(func() {
+		requestPower("reboot", "Reboot")
+	})
+
+	powerControls := tview.NewFlex().
+		AddItem(powerOffBtn, 0, 1, true).
+		AddItem(rebootBtn, 0, 1, false)
+
+	powerFlex := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(powerControls, 3, 1, true).
+		AddItem(powerResult, 0, 4, false)
+
+	pages.AddPage("Power", powerFlex, true, false)
+
 	// --- Menu List ---
 	list := tview.NewList().
 		AddItem("Dashboard", "Overview of system status", 'd', func() {
@@ -229,7 +266,11 @@ func main() {
 		AddItem("Graphical Mode", "Hand the console to vakt-compositor", 'g', func() {
 			launchCompositor(app, dashboardText, pages)
 		}).
-		AddItem("Exit to Shell", "Drop to raw root prompt", 'q', func() {
+		AddItem("Power", "Shut down or restart the appliance", 'o', func() {
+			pages.SwitchToPage("Power")
+			app.SetFocus(powerOffBtn)
+		}).
+		AddItem("Exit to Shell", "Drop to a shell prompt", 'q', func() {
 			app.Stop()
 		})
 	list.SetBorder(true).SetTitle(" Main Menu ")

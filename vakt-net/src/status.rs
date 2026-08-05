@@ -44,7 +44,9 @@ pub fn write(status: &Status) {
     body.push_str(&format!("detail={}\n", status.detail));
 
     let final_path = Path::new(STATUS_PATH);
-    let Some(dir) = final_path.parent() else { return };
+    let Some(dir) = final_path.parent() else {
+        return;
+    };
     let _ = std::fs::create_dir_all(dir);
 
     let tmp_path = dir.join("vakt-net.status.tmp");

@@ -1,100 +1,319 @@
-mod services;
+//! Vakt OS PID 1.
+//!
+//! Brings up the filesystems, seals the root, starts and supervises the
+//! background daemons, waits for them to report ready, and hands the console to
+//! the panel as an unprivileged user. It is also the only process that can shut
+//! the machine down cleanly, so it stays for the whole life of the system.
 
-use nix::mount::{mount, MsFlags};
+mod logfile;
+mod mount;
+mod notify;
+mod privilege;
+mod services;
+mod shutdown;
+
+use notify::Listener;
+use privilege::Identity;
+use services::Control;
 use std::env;
 use std::fs;
-use std::process::Command;
+use std::os::unix::process::CommandExt;
+use std::path::Path;
+use std::process::{Command, ExitStatus};
+use std::sync::Arc;
+use std::time::Duration;
 
+/// Where zrpkg unpacks packages. On the persistent disk, so installs survive a
+/// reboot.
 const ZRPKG_ROOT: &str = "/persistent/zrpkg";
+
+/// PID 1's own PATH. Deliberately only the image's own directories: the package
+/// install root is writable by the unprivileged user, and anything reachable
+/// from there must never be a candidate for a program root runs.
+const SYSTEM_PATH: &str = "/bin:/sbin:/usr/bin:/usr/sbin";
+
+/// How long boot waits for daemons to report readiness before drawing the panel
+/// anyway. Reaching this is not fatal - it only means the panel appears while
+/// something is still starting.
+const READY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Kernel command line flag that gives the console fallback shell root, for
+/// recovering an image whose panel will not start.
+const ROOT_SHELL_FLAG: &str = "vakt.rootshell";
 
 fn main() {
     unsafe {
-        env::set_var("PATH", "/bin:/sbin:/usr/bin:/usr/sbin");
+        env::set_var("PATH", SYSTEM_PATH);
         env::set_var("HOME", "/root");
     }
-    let _ = fs::create_dir_all("/root");
-    let _ = fs::create_dir_all("/etc/vakt");
+
+    // Before any thread exists, so every thread inherits the blocked mask and
+    // shutdown signals can only ever be read off the signalfd.
+    let signal_mask = shutdown::block_signals();
 
     println!("[Vakt-Init] Mounting virtual filesystems...");
-    let flags = MsFlags::empty();
-    let no_data: Option<&str> = None;
+    mount::virtual_filesystems();
 
-    let _ = mount(Some("proc"), "/proc", Some("proc"), flags, no_data);
-    let _ = mount(Some("sys"), "/sys", Some("sysfs"), flags, no_data);
-    let _ = mount(Some("dev"), "/dev", Some("devtmpfs"), flags, no_data);
+    println!("[Vakt-Init] Isolating volatile RAM filesystems...");
+    mount::volatile_filesystems();
 
-    println!("[Vakt-Init] Isolating volatile RAM filesystems and enforcing Read-Only Root...");
-    let secure_tmpfs_flags = MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOEXEC;
+    println!("[Vakt-Init] Searching for persistent storage...");
+    let persistent = mount::mount_persistent();
 
-    let _ = fs::create_dir_all("/run");
-    let _ = mount(Some("tmpfs"), "/run", Some("tmpfs"), secure_tmpfs_flags, Some("mode=0755,size=64M"));
-
-    let _ = fs::create_dir_all("/tmp");
-    let _ = mount(Some("tmpfs"), "/tmp", Some("tmpfs"), secure_tmpfs_flags, Some("mode=1777,size=64M"));
-
-    let _ = mount(None::<&str>, "/", None::<&str>, MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY, no_data);
-
-    println!("[Vakt-Init] Searching for persistent storage on /dev/sda...");
-    let _ = fs::create_dir_all("/persistent");
-    let mut persistent = false;
-    if let Ok(status) = Command::new("mount")
-        .args(&["-t", "ext4", "/dev/sda", "/persistent"])
-        .status()
-    {
-        if status.success() {
-            println!("[Vakt-Init] \x1b[1;32mMounted persistent storage successfully!\x1b[0m");
-            persistent = true;
-        } else {
-            println!("[Vakt-Init] \x1b[1;33mNo persistent disk found. Running in RAM only mode.\x1b[0m");
-        }
-    }
-
-    if persistent {
-        let _ = fs::create_dir_all("/persistent/etc");
-        let _ = fs::create_dir_all(ZRPKG_ROOT);
-        unsafe {
-            env::set_var("ZRPKG_ROOT", ZRPKG_ROOT);
-        }
-        let path = env::var("PATH").unwrap_or_default();
-        unsafe {
-            env::set_var("PATH", format!("{}/usr/bin:{}", ZRPKG_ROOT, path));
-        }
-    }
+    // Everything that has to write to the image itself has now happened.
+    mount::seal_root();
+    shutdown::disable_ctrl_alt_del();
 
     println!("[Vakt-Init] Loading hardware drivers...");
+    load_modules();
+
+    // The panel and everything it launches runs as this user. Without the
+    // account the system still boots; it just boots less safely, and says so.
+    let identity = privilege::lookup(privilege::VAKT_USER);
+    match &identity {
+        Some(id) => {
+            println!(
+                "[Vakt-Init] Panel will run as {} (uid {}).",
+                id.name, id.uid
+            );
+            privilege::grant_console(id);
+            privilege::grant(Path::new(&id.home), id);
+            if persistent {
+                privilege::grant(Path::new(ZRPKG_ROOT), id);
+                privilege::grant(Path::new("/persistent/etc"), id);
+            }
+        }
+        None => println!(
+            "[Vakt-Init] \x1b[1;33mNo '{}' account in /etc/passwd; \
+             the panel will run as root.\x1b[0m",
+            privilege::VAKT_USER
+        ),
+    }
+
+    banner();
+
+    println!("[Vakt-Init] Starting system services...");
+    let control = Control::new(services::DEFAULT_SERVICES);
+
+    // Daemons find the readiness socket through the environment, so it has to
+    // exist and be advertised before the supervisor spawns anything.
+    let listener = match Listener::bind(
+        Path::new(notify::SOCKET_PATH),
+        identity.as_ref().map(|i| i.gid),
+    ) {
+        Ok(listener) => {
+            unsafe { env::set_var(notify::SOCKET_ENV, listener.path()) };
+            Some(listener)
+        }
+        Err(e) => {
+            println!(
+                "[Vakt-Init] \x1b[1;33mNo readiness socket ({}); \
+                 boot will not wait for daemons.\x1b[0m",
+                e
+            );
+            None
+        }
+    };
+
+    if let Some(listener) = listener {
+        let control = Arc::clone(&control);
+        std::thread::spawn(move || watch_notifications(listener, control));
+    }
+
+    match signal_mask {
+        Ok(mask) => {
+            let control = Arc::clone(&control);
+            std::thread::spawn(move || shutdown::watch_signals(mask, control));
+        }
+        Err(e) => println!(
+            "[Vakt-Init] \x1b[1;31mCould not block shutdown signals ({}); \
+             clean shutdown is unavailable.\x1b[0m",
+            e
+        ),
+    }
+
+    {
+        let supervisor =
+            services::Supervisor::new(services::DEFAULT_SERVICES, Arc::clone(&control));
+        std::thread::spawn(move || supervisor.run());
+    }
+
+    if control.wait_until_ready(READY_TIMEOUT) {
+        println!("[Vakt-Init] All services reported ready.");
+    } else {
+        println!(
+            "[Vakt-Init] \x1b[1;33mNot every service reported ready within {}s; \
+             starting the panel anyway.\x1b[0m",
+            READY_TIMEOUT.as_secs()
+        );
+    }
+
+    console_loop(identity.as_ref(), persistent);
+}
+
+/// Runs the panel, falling back to a shell if it exits, until the system goes
+/// down. This is the main thread's final job; shutdown happens on another one.
+fn console_loop(identity: Option<&Identity>, persistent: bool) {
+    let session = session_environment(identity, persistent);
+    let shell_identity = if root_shell_requested() {
+        None
+    } else {
+        identity
+    };
+
+    while !shutdown::under_way() {
+        println!("[Vakt-Init] Launching Vakt Panel...");
+        let _ = run_on_console(&["vakt-panel"], identity, &session);
+
+        if shutdown::under_way() {
+            break;
+        }
+
+        println!("[Vakt-Init] Panel exited. Dropping to a shell...");
+        let _ = run_on_console(&["/bin/sh"], shell_identity, &session);
+    }
+
+    // Shutdown is in progress on the signal thread and ends in reboot(2).
+    // Returning from main would kill PID 1 and panic the kernel, so wait here.
+    loop {
+        std::thread::park();
+    }
+}
+
+/// Starts a program on the console, as `identity` when one is given.
+///
+/// `setsid` and `cttyhack` are busybox applets: the first puts the program in
+/// its own session, the second attaches the system console to it as a
+/// controlling terminal. Both run as the target user too, which is why
+/// `grant_console` has to hand over `/dev/console` first.
+fn run_on_console(
+    argv: &[&str],
+    identity: Option<&Identity>,
+    session: &[(&str, String)],
+) -> std::io::Result<ExitStatus> {
+    let mut command = Command::new("setsid");
+    command.arg("cttyhack");
+    command.args(argv);
+
+    for (key, value) in session {
+        command.env(key, value);
+    }
+
+    if let Some(id) = identity {
+        let (uid, gid) = (id.uid, id.gid);
+        command.env("HOME", &id.home);
+        command.env("USER", &id.name);
+        command.current_dir(&id.home);
+        // Runs in the forked child between fork and exec, so the program on the
+        // other side of exec can never have been root.
+        unsafe {
+            command.pre_exec(move || privilege::become_user(uid, gid));
+        }
+    }
+
+    let mut child = command.spawn()?;
+    shutdown::set_foreground(child.id());
+    let status = child.wait();
+    shutdown::clear_foreground();
+    status
+}
+
+/// The environment the console session gets.
+///
+/// The package install root goes on the console session's PATH and not on PID
+/// 1's, so a package the unprivileged user installed is reachable from the
+/// panel without ever becoming something a root process would pick up.
+fn session_environment(
+    identity: Option<&Identity>,
+    persistent: bool,
+) -> Vec<(&'static str, String)> {
+    let mut session = vec![(
+        "PS1",
+        "\\[\\e[1;31m\\][Vakt-OS]\\[\\e[0m\\] \\w \\$ ".to_string(),
+    )];
+
+    if persistent {
+        session.push(("ZRPKG_ROOT", ZRPKG_ROOT.to_string()));
+        session.push(("PATH", format!("{}/usr/bin:{}", ZRPKG_ROOT, SYSTEM_PATH)));
+    } else {
+        session.push(("PATH", SYSTEM_PATH.to_string()));
+    }
+
+    if identity.is_none() {
+        session.push(("USER", "root".to_string()));
+    }
+    session
+}
+
+/// Receives readiness and shutdown requests from `/run/init.sock`.
+fn watch_notifications(listener: Listener, control: Arc<Control>) {
+    loop {
+        let message = match listener.recv() {
+            Ok(message) => message,
+            Err(nix::errno::Errno::EINTR) => continue,
+            Err(e) => {
+                println!(
+                    "[Vakt-Init] \x1b[1;33mReadiness socket failed ({}); \
+                     no longer listening.\x1b[0m",
+                    e
+                );
+                return;
+            }
+        };
+
+        if let Some(verb) = message.shutdown.as_deref() {
+            match shutdown::Action::from_verb(verb) {
+                Some(action) => shutdown::execute(action, &control),
+                None => println!("[Vakt-Init] Ignoring unknown shutdown request '{}'.", verb),
+            }
+        }
+
+        if message.ready {
+            match control.note_ready(
+                message.pid,
+                message.name.as_deref(),
+                message.status.as_deref(),
+            ) {
+                Some(name) => println!("[Vakt-Init] Service '{}' is ready.", name),
+                None => println!("[Vakt-Init] Ignoring readiness from an unknown sender."),
+            }
+        }
+    }
+}
+
+/// Loads a driver for every device the kernel has enumerated.
+///
+/// Walking modaliases is what a udev rule would do; there is no udev here, and
+/// this runs once rather than watching for hotplug.
+///
+/// The image's own kernel is monolithic and has no modules at all, in which
+/// case there is nothing to load and running modprobe a few hundred times to
+/// be told so would only slow boot down.
+fn load_modules() {
+    if !Path::new("/lib/modules").is_dir() {
+        println!("[Vakt-Init] Monolithic kernel; no modules to load.");
+        return;
+    }
+
     let _ = Command::new("sh")
         .arg("-c")
-        .arg("find /sys -name modalias -exec cat {} + | xargs -n 1 modprobe 2>/dev/null")
+        .arg("find /sys -name modalias -exec cat {} + | sort -u | xargs -n 1 modprobe 2>/dev/null")
         .status();
+}
 
+fn banner() {
     println!("\x1b[1;31m");
     if let Ok(logo) = fs::read_to_string("/etc/vakt_logo.txt") {
         println!("{}", logo);
     }
     println!("\x1b[0m");
-    println!("Welcome to Vakt OS (Rust Init System)");
-    println!("");
+    println!("Welcome to Vakt OS");
+    println!();
+}
 
-    println!("[Vakt-Init] Starting system services...");
-    std::thread::spawn(|| {
-        services::Supervisor::new(services::DEFAULT_SERVICES).run();
-    });
-
-    unsafe {
-        env::set_var("PS1", "\\[\\e[1;31m\\][Vakt-OS]\\[\\e[0m\\] \\w # ");
-    }
-
-    loop {
-        println!("[Vakt-Init] Launching Vakt Panel...");
-        let _ = Command::new("setsid")
-            .arg("cttyhack")
-            .arg("vakt-panel")
-            .status();
-
-        println!("[Vakt-Init] Panel exited. Dropping to raw root shell...");
-        let _ = Command::new("setsid")
-            .arg("cttyhack")
-            .arg("/bin/sh")
-            .status();
-    }
+/// Whether the kernel command line asked for a root recovery shell.
+fn root_shell_requested() -> bool {
+    fs::read_to_string("/proc/cmdline")
+        .map(|cmdline| cmdline.split_whitespace().any(|arg| arg == ROOT_SHELL_FLAG))
+        .unwrap_or(false)
 }

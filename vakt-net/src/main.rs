@@ -1,4 +1,6 @@
 mod config;
+mod notify;
+mod sandbox;
 mod status;
 
 use config::NetConfig;
@@ -31,7 +33,19 @@ macro_rules! log {
 fn main() {
     log!("Network daemon starting.");
 
+    // Before anything else runs, and before the first child process is spawned,
+    // so the confinement covers the helpers too.
+    match sandbox::confine(&[config::PERSISTENT_CONF, config::FALLBACK_CONF]) {
+        Ok(report) => log!("{}", report),
+        Err(e) => log!("Could not apply the Landlock sandbox: {}", e),
+    }
+
     let mut backoff = BACKOFF_START;
+    // Readiness is reported once, at the first point the daemon has settled
+    // into a state the rest of the system can act on. That is not the same as
+    // "connected": with no configuration there is nothing to connect to, and
+    // boot must not stall waiting for a network that was never set up.
+    let mut announced = false;
 
     loop {
         let stamp = config::config_stamp();
@@ -48,6 +62,7 @@ fn main() {
                 ),
             });
             log!("No configuration found; waiting for one to appear.");
+            announce(&mut announced, "no network configured");
             wait_for_config_change(stamp, None);
             continue;
         };
@@ -56,7 +71,11 @@ fn main() {
             "Using {} (interface {}, {}).",
             path.display(),
             cfg.interface,
-            if cfg.is_wireless() { "wireless" } else { "wired" }
+            if cfg.is_wireless() {
+                "wireless"
+            } else {
+                "wired"
+            }
         );
 
         status::write(&Status {
@@ -70,6 +89,7 @@ fn main() {
         match connect(&cfg) {
             Ok(ip) => {
                 log!("Connected. Address {} on {}.", ip, cfg.interface);
+                announce(&mut announced, &format!("{} on {}", ip, cfg.interface));
                 status::write(&Status {
                     state: State::Connected,
                     interface: cfg.interface.clone(),
@@ -82,7 +102,11 @@ fn main() {
                 monitor(&cfg, stamp);
             }
             Err(e) => {
-                log!("Connection failed: {}. Retrying in {}s.", e, backoff.as_secs());
+                log!(
+                    "Connection failed: {}. Retrying in {}s.",
+                    e,
+                    backoff.as_secs()
+                );
                 status::write(&Status {
                     state: State::Failed,
                     interface: cfg.interface.clone(),
@@ -90,11 +114,25 @@ fn main() {
                     ip: None,
                     detail: e.clone(),
                 });
+                // A network that will not come up is still a settled answer;
+                // boot should carry on and let the panel show the failure.
+                announce(&mut announced, &format!("connection failed: {}", e));
                 // A config edit should cut the backoff short.
                 wait_for_config_change(stamp, Some(backoff));
                 backoff = (backoff * 2).min(BACKOFF_MAX);
             }
         }
+    }
+}
+
+/// Reports readiness to vakt-init the first time, and refreshes the status line
+/// on every call after that.
+fn announce(announced: &mut bool, detail: &str) {
+    if *announced {
+        notify::status(detail);
+    } else {
+        notify::ready(detail);
+        *announced = true;
     }
 }
 
@@ -222,7 +260,12 @@ fn interface_address(interface: &str) -> Option<String> {
     String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::trim)
-        .find_map(|line| line.strip_prefix("inet ")?.split('/').next().map(str::to_string))
+        .find_map(|line| {
+            line.strip_prefix("inet ")?
+                .split('/')
+                .next()
+                .map(str::to_string)
+        })
 }
 
 fn stop_previous_supplicant() {

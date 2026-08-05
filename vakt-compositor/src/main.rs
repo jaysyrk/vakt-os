@@ -1,7 +1,14 @@
+mod sandbox;
+
 use libc;
 use memmap2::MmapMut;
 use std::fs::OpenOptions;
 use std::os::unix::io::AsRawFd;
+use std::path::Path;
+
+/// The device this program exists to draw on, and - once the sandbox is up -
+/// the only file it can reach.
+const FRAMEBUFFER: &str = "/dev/fb0";
 
 const FBIOGET_VSCREENINFO: libc::c_ulong = 0x4600;
 const FBIOGET_FSCREENINFO: libc::c_ulong = 0x4602;
@@ -66,11 +73,19 @@ struct FbFixScreenInfo {
 }
 
 fn main() {
+    match sandbox::confine(Path::new(FRAMEBUFFER)) {
+        Ok(report) => println!("[Vakt-Compositor] {}", report),
+        Err(e) => println!(
+            "[Vakt-Compositor] Could not apply the Landlock sandbox: {}",
+            e
+        ),
+    }
+
     let fb = OpenOptions::new()
         .read(true)
         .write(true)
-        .open("/dev/fb0")
-        .expect("Failed to open /dev/fb0");
+        .open(FRAMEBUFFER)
+        .unwrap_or_else(|e| panic!("Failed to open {}: {}", FRAMEBUFFER, e));
 
     let fd = fb.as_raw_fd();
 
@@ -90,31 +105,32 @@ fn main() {
     let finfo = unsafe { finfo.assume_init() };
 
     let screensize = finfo.smem_len as usize;
-    
-    let mut map = unsafe {
-        MmapMut::map_mut(&fb).expect("Failed to mmap framebuffer")
-    };
 
-    println!("Resolution: {}x{}, {} bpp", vinfo.xres, vinfo.yres, vinfo.bits_per_pixel);
+    let mut map = unsafe { MmapMut::map_mut(&fb).expect("Failed to mmap framebuffer") };
+
+    println!(
+        "Resolution: {}x{}, {} bpp",
+        vinfo.xres, vinfo.yres, vinfo.bits_per_pixel
+    );
 
     // Draw a dark gray background
     for y in 0..vinfo.yres {
         for x in 0..vinfo.xres {
             let location = (x + vinfo.xoffset) * (vinfo.bits_per_pixel / 8)
                 + (y + vinfo.yoffset) * finfo.line_length;
-            
+
             let loc = location as usize;
             if loc + 3 < screensize {
                 if vinfo.bits_per_pixel == 32 {
-                    map[loc] = 30;       // B
-                    map[loc + 1] = 30;   // G
-                    map[loc + 2] = 30;   // R
-                    map[loc + 3] = 0;   // A
+                    map[loc] = 30; // B
+                    map[loc + 1] = 30; // G
+                    map[loc + 2] = 30; // R
+                    map[loc + 3] = 0; // A
                 }
             }
         }
     }
-    
+
     // Draw a blue square in the middle (Vakt OS Mock GUI)
     let square_size = 300;
     let start_x = (vinfo.xres - square_size) / 2;
@@ -124,14 +140,14 @@ fn main() {
         for x in start_x..(start_x + square_size) {
             let location = (x + vinfo.xoffset) * (vinfo.bits_per_pixel / 8)
                 + (y + vinfo.yoffset) * finfo.line_length;
-            
+
             let loc = location as usize;
             if loc + 3 < screensize {
                 if vinfo.bits_per_pixel == 32 {
-                    map[loc] = 255;     // B
-                    map[loc + 1] = 50;  // G
-                    map[loc + 2] = 50;  // R
-                    map[loc + 3] = 0;   // A
+                    map[loc] = 255; // B
+                    map[loc + 1] = 50; // G
+                    map[loc + 2] = 50; // R
+                    map[loc + 3] = 0; // A
                 }
             }
         }

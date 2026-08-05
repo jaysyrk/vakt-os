@@ -1,7 +1,15 @@
 [package]
 name = "vakt-init"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
-nix = { version = "0.31.3", features = ["mount", "fs"] }
+nix = { version = "0.31.3", features = [
+    "fs",
+    "mount",
+    "process",
+    "reboot",
+    "signal",
+    "socket",
+    "user",
+] }

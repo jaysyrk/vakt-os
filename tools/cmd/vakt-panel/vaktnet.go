@@ -128,16 +128,19 @@ func servicesReportFrom(path string) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("[::b]SERVICE          STATE      PID     RESTARTS[-]\n\n")
+	b.WriteString("[::b]SERVICE          STATE      PID     RST  READY[-]\n\n")
 	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
 		if line == "" {
 			continue
 		}
+		// name, state, pid, restarts, readiness, detail. Older supervisors
+		// wrote five fields; pad rather than drop the line.
 		fields := strings.Split(line, "\t")
-		for len(fields) < 5 {
+		for len(fields) < 6 {
 			fields = append(fields, "")
 		}
-		name, state, pid, restarts, description := fields[0], fields[1], fields[2], fields[3], fields[4]
+		name, state, pid, restarts := fields[0], fields[1], fields[2], fields[3]
+		readiness, detail := fields[4], fields[5]
 
 		color := "yellow"
 		switch state {
@@ -150,9 +153,18 @@ func servicesReportFrom(path string) string {
 			pid = "-"
 		}
 
-		fmt.Fprintf(&b, "%-16s [%s]%-10s[-] %-7s %s\n", name, color, state, pid, restarts)
-		if description != "" {
-			fmt.Fprintf(&b, "  [gray]%s[-]\n", description)
+		readyColor := "gray"
+		switch readiness {
+		case "ready":
+			readyColor = "green"
+		case "waiting":
+			readyColor = "yellow"
+		}
+
+		fmt.Fprintf(&b, "%-16s [%s]%-10s[-] %-7s %-4s [%s]%s[-]\n",
+			name, color, state, pid, restarts, readyColor, readiness)
+		if detail != "" {
+			fmt.Fprintf(&b, "  [gray]%s[-]\n", detail)
 		}
 	}
 	return b.String()

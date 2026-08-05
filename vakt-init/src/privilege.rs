@@ -1,0 +1,184 @@
+//! Dropping root before handing the console to the panel.
+//!
+//! There is no glibc and no NSS in this image, so `/etc/passwd` is read
+//! directly rather than through `getpwnam`. That is not a shortcut: the file is
+//! the whole of the user database here, written by `build.sh`, and parsing it
+//! in-process keeps PID 1 free of a libc lookup path that would have to be
+//! present in the initramfs.
+
+use nix::unistd::{Gid, Uid, chown, setgid, setgroups, setuid};
+use std::io;
+use std::path::Path;
+
+/// The unprivileged account the panel and everything it launches runs as.
+pub const VAKT_USER: &str = "vakt";
+
+const PASSWD: &str = "/etc/passwd";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Identity {
+    pub name: String,
+    pub uid: u32,
+    pub gid: u32,
+    pub home: String,
+}
+
+/// Looks `name` up in the system's `/etc/passwd`.
+pub fn lookup(name: &str) -> Option<Identity> {
+    let passwd = std::fs::read_to_string(PASSWD).ok()?;
+    parse_passwd(&passwd, name)
+}
+
+/// Finds one account in the contents of a `passwd(5)` file.
+///
+/// Split out from [`lookup`] so the parser is testable without touching the
+/// host's real user database.
+fn parse_passwd(passwd: &str, name: &str) -> Option<Identity> {
+    for line in passwd.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // name:password:uid:gid:gecos:home:shell
+        let mut fields = line.split(':');
+        let entry = fields.next()?;
+        if entry != name {
+            continue;
+        }
+        let _password = fields.next()?;
+        let uid: u32 = fields.next()?.parse().ok()?;
+        let gid: u32 = fields.next()?.parse().ok()?;
+        let _gecos = fields.next().unwrap_or("");
+        let home = fields.next().unwrap_or("/").to_string();
+
+        return Some(Identity {
+            name: entry.to_string(),
+            uid,
+            gid,
+            home,
+        });
+    }
+    None
+}
+
+/// Irreversibly becomes `identity`.
+///
+/// The order is the only order that works: supplementary groups and the group
+/// id must go while the process is still root, because dropping the user id
+/// first would take away the privilege needed to drop the rest. The final
+/// check is what makes "irreversible" a claim rather than a hope - if the
+/// kernel left any path back to uid 0, the caller must not continue.
+///
+/// This is called from `pre_exec`, between `fork` and `exec` in a process that
+/// has other threads, so it sticks to async-signal-safe syscalls and allocates
+/// nothing - including on the failure path, which is why the last error is a
+/// raw errno rather than a message.
+pub fn become_user(uid: u32, gid: u32) -> io::Result<()> {
+    let uid = Uid::from_raw(uid);
+    let gid = Gid::from_raw(gid);
+
+    setgroups(&[gid]).map_err(io::Error::from)?;
+    setgid(gid).map_err(io::Error::from)?;
+    setuid(uid).map_err(io::Error::from)?;
+
+    if setuid(Uid::from_raw(0)).is_ok() {
+        return Err(io::Error::from_raw_os_error(nix::libc::EPERM));
+    }
+    Ok(())
+}
+
+/// Hands a path to the unprivileged user, creating it first if needed.
+///
+/// Used for the few places the panel legitimately has to write: its home, the
+/// package install root, and the directory holding the network configuration
+/// it saves.
+pub fn grant(path: &Path, identity: &Identity) {
+    let _ = std::fs::create_dir_all(path);
+    if let Err(e) = chown(
+        path,
+        Some(Uid::from_raw(identity.uid)),
+        Some(Gid::from_raw(identity.gid)),
+    ) {
+        println!(
+            "[Vakt-Init] \x1b[1;33mCould not give {} to {}: {}\x1b[0m",
+            path.display(),
+            identity.name,
+            e
+        );
+    }
+}
+
+/// Hands the console devices to the unprivileged user.
+///
+/// Without this the panel starts as `vakt` and immediately fails to open a
+/// terminal: devtmpfs creates `/dev/console` owned by root with mode 0600, and
+/// `cttyhack` needs to open it to give the panel a controlling tty. `/dev/fb0`
+/// is here for the same reason - the compositor the panel launches writes to it
+/// directly.
+pub fn grant_console(identity: &Identity) {
+    const DEVICES: &[&str] = &[
+        "/dev/console",
+        "/dev/tty0",
+        "/dev/tty1",
+        "/dev/ttyS0",
+        "/dev/fb0",
+    ];
+
+    for device in DEVICES {
+        let path = Path::new(device);
+        if !path.exists() {
+            continue;
+        }
+        let _ = chown(
+            path,
+            Some(Uid::from_raw(identity.uid)),
+            Some(Gid::from_raw(identity.gid)),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE: &str = "\
+# system accounts
+root:x:0:0:root:/root:/bin/sh
+vakt:x:1000:1000:Vakt appliance user:/home/vakt:/bin/sh
+nobody:x:65534:65534:nobody:/:/bin/false
+";
+
+    #[test]
+    fn finds_an_account_by_name() {
+        let vakt = parse_passwd(SAMPLE, "vakt").expect("vakt should be present");
+        assert_eq!(vakt.uid, 1000);
+        assert_eq!(vakt.gid, 1000);
+        assert_eq!(vakt.home, "/home/vakt");
+    }
+
+    #[test]
+    fn root_is_still_root() {
+        let root = parse_passwd(SAMPLE, "root").unwrap();
+        assert_eq!((root.uid, root.gid), (0, 0));
+    }
+
+    #[test]
+    fn missing_account_is_none() {
+        assert_eq!(parse_passwd(SAMPLE, "postgres"), None);
+    }
+
+    /// A name that only appears inside another field must not match, or a
+    /// crafted gecos string could pick the account the panel runs as.
+    #[test]
+    fn only_the_first_field_is_matched() {
+        assert_eq!(parse_passwd(SAMPLE, "Vakt appliance user"), None);
+        assert_eq!(parse_passwd(SAMPLE, "/bin/sh"), None);
+    }
+
+    #[test]
+    fn malformed_lines_are_skipped_not_fatal() {
+        let passwd = "garbage\nvakt:x:notanumber:1000::/home/vakt:/bin/sh\n";
+        assert_eq!(parse_passwd(passwd, "vakt"), None);
+    }
+}
