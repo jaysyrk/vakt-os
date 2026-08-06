@@ -49,7 +49,6 @@ PACKAGES=(
     "vakt-ids|$PROJECT_ROOT/tools/bin/vakt-ids|1.0.0|Filesystem integrity intrusion detection daemon.|"
     "vakt-compositor|$PROJECT_ROOT/vakt-compositor/target/release/vakt-compositor|0.1.0|Raw framebuffer graphical compositor.|"
     "vakt-verify|$PROJECT_ROOT/vakt-verify/zig-out/bin/vakt-verify|0.1.0|Independent Ed25519 package signature verifier.|"
-    "vakt-ai|$PROJECT_ROOT/tools/bin/vakt-ai|0.1.0|Vakt OS AI assistant.|"
 )
 
 rm -rf "$STAGE"
