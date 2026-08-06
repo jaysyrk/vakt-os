@@ -230,6 +230,12 @@ jobs:
 
       - name: Build the ISO
         env:
+          # build.sh now defaults to VAKT_KERNEL=host, the right choice for
+          # real hardware - but that mode copies the build machine's own
+          # /lib/modules and /lib/firmware, which a container does not
+          # meaningfully have. CI instead builds the from-scratch monolithic
+          # kernel, which is also the harder path to keep working and
+          # therefore the one most worth testing on every push.
           VAKT_KERNEL: custom
         run: |
           # build.sh drops to $SUDO_USER for the compile steps; in a container

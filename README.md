@@ -101,16 +101,28 @@ the rootfs, builds a kernel, and produces `vakt-os.iso` plus a 256MB
 
 Two kernel modes:
 
-| | `VAKT_KERNEL=custom` (default) | `VAKT_KERNEL=host` |
+| | `VAKT_KERNEL=host` (default) | `VAKT_KERNEL=custom` |
 |---|---|---|
-| Kernel | Built from `build-system/kernel.config` | `/boot/vmlinuz-linux` from the host |
-| Modules | None — monolithic | The host's `/lib/modules` and `/lib/firmware` |
-| Size | Small | Large; the firmware tree alone is hundreds of MB |
-| Hardware | QEMU and common wired x86-64 | Whatever the host kernel supports |
-| Build time | Long the first time; the source tree is cached | Seconds |
+| Kernel | `/boot/vmlinuz-linux` from the build machine | Built from `build-system/kernel.config` |
+| Modules | The host's `/lib/modules` and `/lib/firmware` | None — monolithic |
+| Size | Large; the firmware tree alone is hundreds of MB | Small |
+| Hardware | Whatever the host kernel supports | QEMU, common wired NICs, NVMe/AHCI, USB HID/storage — no Wi-Fi |
+| Build time | Seconds | Long the first time; the source tree is cached |
+
+**`host` is the one for real hardware you didn't hand-pick drivers for in
+advance.** Build it *on* the machine you're installing to, or one of the same
+generation, so the kernel's modules actually match the hardware:
 
 ```bash
-sudo VAKT_KERNEL=host ./build.sh   # skip the kernel compile
+sudo ./build.sh
+```
+
+`custom` trades that coverage for a small, from-scratch, no-modules image —
+right for a VM or a specific known machine, not for "boot this on whatever PC
+I have":
+
+```bash
+sudo VAKT_KERNEL=custom ./build.sh
 ```
 
 To ship an image that already knows where its packages live, name the
@@ -126,6 +138,8 @@ to start clean.
 
 ## Running
 
+### In a VM
+
 Serve the package repository from the host first:
 
 ```bash
@@ -139,11 +153,37 @@ Then boot. The data disk must be the first drive so it lands on `/dev/sda`,
 and QEMU user networking puts the host at `10.0.2.2`:
 
 ```bash
-qemu-system-x86_64 -m 2G \
+qemu-system-x86_64 -m 2G -enable-kvm \
     -drive file=vakt-data.img,format=raw,index=0,media=disk \
     -cdrom vakt-os.iso \
     -netdev user,id=n0 -device e1000,netdev=n0
 ```
+
+### On real hardware
+
+```bash
+lsblk                       # find the USB drive - not your main disk
+sudo dd if=vakt-os.iso of=/dev/sdX bs=4M status=progress conv=fsync
+```
+
+Persistent storage works the same way it does in QEMU — the kernel needs a
+disk it enumerates as `/dev/sda` — but there is no `index=0` to force it on
+real hardware. Use a **second** physical drive or USB stick, formatted ext4,
+and check `dmesg` after boot to confirm it actually landed on `sda`; if it
+did not, `vakt-init` just runs in RAM-only mode instead of failing, so nothing
+breaks, but nothing persists either.
+
+```bash
+sudo mkfs.ext4 /dev/sdY     # the persistent disk, separate from the boot USB
+```
+
+**Disable Secure Boot.** This GRUB is not signed for it, and it will refuse
+to load. Pick the plain "Vakt OS" entry in the boot menu; the "root recovery
+shell" entry is for when the panel will not start.
+
+There is no QEMU gateway on real hardware, so point `zrpkg` at a real
+repository rather than the default (see
+[Remote repositories](#remote-repositories)) if you want to install anything.
 
 ## The kernel
 
@@ -190,9 +230,19 @@ The daemon polls the file's modification time, so saving it triggers a
 reconnect with no restart needed. Current state is published to
 `/run/vakt-net.status` and shown on the panel's Network page.
 
-The stock kernel configuration builds in the 802.11 stack but no chipset
-drivers, since each one needs its own firmware. Add yours to
-`build-system/kernel.config`, or use `VAKT_KERNEL=host`.
+**Wi-Fi needs `VAKT_KERNEL=host`.** The `custom` kernel builds in the 802.11
+stack (`cfg80211`, `mac80211`) but no chipset driver: real Wi-Fi hardware
+needs a proprietary firmware blob loaded at runtime, and carrying those is
+exactly what the monolithic, no-`/lib/firmware` build exists not to do. If you
+need Wi-Fi, build with the host kernel instead — it brings the build
+machine's own modules and firmware tree with it.
+
+`custom` mode's wired coverage is narrower than `host` too, though broader
+than just QEMU: Intel e1000/e1000e, Realtek r8169, and Broadcom tg3, plus
+virtio-net. r8169 in particular enumerates most Realtek revisions without a
+firmware file, but some of the newest chip generations will show up in
+`dmesg` and still refuse to link — another point in favor of `host` mode on
+hardware you have not already tested.
 
 ## Packages
 

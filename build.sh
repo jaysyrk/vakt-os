@@ -11,11 +11,22 @@ set -eu
 # the rootfs, and produces a bootable ISO plus a persistent data disk.
 #
 # Environment:
-#   VAKT_KERNEL=custom   build a monolithic kernel from build-system/kernel.config
-#                        (default). Small image, no modules, no firmware.
-#   VAKT_KERNEL=host     reuse /boot/vmlinuz-linux and the host's modules and
-#                        firmware. Much larger, but boots on hardware the custom
-#                        kernel has no driver for.
+#   VAKT_KERNEL=host     (default) reuse /boot/vmlinuz-linux plus the build
+#                        machine's own /lib/modules and /lib/firmware. This is
+#                        the one that boots on real hardware you did not hand
+#                        pick every driver for in advance - build it on the
+#                        machine you're installing to (or one of the same
+#                        generation), so the modules actually match.
+#   VAKT_KERNEL=custom   build a small monolithic kernel from
+#                        build-system/kernel.config instead. No modules, no
+#                        firmware tree, much smaller image - but only the
+#                        drivers explicitly listed in that file exist, which
+#                        in practice means QEMU, common wired NICs, NVMe/AHCI
+#                        storage, and USB HID/storage. No Wi-Fi: the chipsets
+#                        that need proprietary firmware blobs are exactly what
+#                        this mode exists to not carry. Use this for a known,
+#                        fixed piece of hardware or a VM, not an unknown
+#                        real machine.
 #   VAKT_REPO_URL=...    bake a package repository URL into the image, for an
 #                        appliance that should already know where to fetch from.
 #                        Defaults to the QEMU host. Anything written to the data
@@ -31,7 +42,7 @@ PROJECT_ROOT=$(pwd)
 ROOTFS="/tmp/vakt-rootfs"
 ISO_DIR="/tmp/vakt-iso"
 OUT_ISO="$PROJECT_ROOT/vakt-os.iso"
-VAKT_KERNEL="${VAKT_KERNEL:-custom}"
+VAKT_KERNEL="${VAKT_KERNEL:-host}"
 # The QEMU host under user networking. Override to ship an image pointed at a
 # repository on a server you run.
 VAKT_REPO_URL="${VAKT_REPO_URL:-http://10.0.2.2:8080}"

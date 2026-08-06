@@ -37,8 +37,8 @@ Building an image, which is the only way to test the parts that need to be
 PID 1:
 
 ```bash
-sudo VAKT_KERNEL=host ./build.sh   # fast: reuses the host kernel
-sudo ./build.sh                    # slow: builds the monolithic kernel
+sudo ./build.sh                       # default (VAKT_KERNEL=host): fast, reuses the host kernel
+sudo VAKT_KERNEL=custom ./build.sh    # slow: builds the monolithic kernel from scratch
 ```
 
 Then boot it with the QEMU command the build prints at the end.
