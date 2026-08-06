@@ -3,7 +3,8 @@
 [Readme](README.md) | [Roadmap](ROADMAP.md) | [Contributing](CONTRIBUTING.md)
 
 A Linux security appliance built from scratch — custom init, package manager,
-TUI, service supervisor, and framebuffer compositor, written in Rust and Go.
+TUI, service supervisor, and framebuffer compositor, written in Rust, Go, and
+Zig.
 
 There is no systemd, no glibc userland, and no distro underneath it. The image
 is a statically-linked busybox rootfs, a Rust program as PID 1, and the tools
@@ -35,6 +36,7 @@ GRUB → vmlinuz → initramfs → /init (vakt-init, Rust, PID 1)
 | `vakt-compositor` | Rust | Draws directly to `/dev/fb0` via mmap. No X11, no Wayland. |
 | `zrpkg` | Rust | Package manager: resolve dependencies, fetch, verify ed25519 signature, unpack, uninstall. |
 | `zrpkg-server` | Go | Host-side HTTP repository server. |
+| `vakt-verify` | Zig | Independent, from-scratch re-check of a package signature — no code shared with `zrpkg`. |
 
 ## Security model
 
@@ -76,6 +78,14 @@ configuration builds it in and the GRUB entry puts it in the LSM stack.
 **Packages must be signed.** There is no unverified install path. If the image
 has no trust anchor, or the archive does not verify against it, `zrpkg` deletes
 the download and stops. See [Packages](#packages).
+
+**Signatures get a second, independent opinion.** `vakt-verify` re-implements
+the same SHA-256 + Ed25519 check in Zig, against only its standard library —
+no code, no crate, no line shared with `zrpkg`'s Rust verifier. It runs
+automatically in `build-system/mkrepo.sh`, checking every package the moment
+after `zrpkg` signs it, and refuses to publish the repository if the two
+disagree. A bug or a backdoor in one verifier is not automatically a bug in
+the other.
 
 ## Building
 
@@ -228,6 +238,23 @@ signs each package, writes `tools/repo/`, and records each package's
 dependencies in the manifest and the index. `build.sh` copies the matching
 public key into the image as `/etc/vakt/trusted.key`.
 
+Every archive it signs is immediately re-checked by `vakt-verify`, so the
+build fails before anything is published rather than after:
+
+```
+    Signature:  b908d6a1...
+    Public key: 4d29b6f1...
+PASS  tool  sha256:6eced72d...
+```
+
+You can run the same check yourself, against any package and any key, without
+installing anything:
+
+```bash
+vakt-verify tools/repo/vakt-audit.zrp tools/repo/vakt-audit.json \
+    --pubkey-file build-system/keys/repo.pub
+```
+
 > **The private key is gitignored and is not in this repository.** A fresh
 > clone generates its own on the first `mkrepo.sh` run, which means an image
 > built from a fresh clone will not install packages signed by anyone else's.
@@ -349,6 +376,7 @@ pkg-manager/                zrpkg (Rust)
 vakt-init/                  PID 1, supervisor, readiness, shutdown (Rust)
 vakt-net/                   Networking daemon (Rust)
 vakt-compositor/            Framebuffer compositor (Rust)
+vakt-verify/                Independent signature verifier (Zig)
 tools/cmd/                  Go tools: panel, audit, ids, repo server
 deploy/                     Running the repository on a server you rent
 .github/workflows/build.yml CI: tests, package pipeline, ISO artifact
@@ -361,15 +389,17 @@ cargo test --manifest-path vakt-init/Cargo.toml    # supervisor, logs, readiness
 cargo test --manifest-path pkg-manager/Cargo.toml  # graph, trust, install, removal
 cargo test --manifest-path vakt-net/Cargo.toml     # config parsing, notification
 cd tools && go test ./cmd/...                      # panel rendering, repository server
+cd vakt-verify && zig build test                   # hex/arg parsing, signed-message pinning
 ```
 
 CI runs all of these on `archlinux:latest`, then drives the package manager
 end to end against a real repository server — pack and sign a three-package
 dependency chain, install the top one, confirm the graph was walked in order,
 confirm a tampered archive is refused, confirm removal is refused while
-something still depends on the package — and finally builds the ISO and
-uploads it as an artifact. Tagging `v*` publishes it as a release asset,
-because the image is well over what the repository will hold.
+something still depends on the package, and confirm `vakt-verify` agrees with
+every signature `zrpkg` produced and rejects a tampered one — then builds the
+ISO and uploads it as an artifact. Tagging `v*` publishes it as a release
+asset, because the image is well over what the repository will hold.
 
 ## Third-party components
 
@@ -394,6 +424,10 @@ not, and where they come from.
 **Go dependencies** — [`rivo/tview`](https://github.com/rivo/tview) and
 [`gdamore/tcell`](https://github.com/gdamore/tcell) for the panel TUI, and their
 transitive dependencies. See `tools/go.mod`.
+
+**Zig dependencies** — none. `vakt-verify` uses only `std.crypto` (SHA-256,
+Ed25519), `std.json`, and `std.process`/`std.Io` from the standard library
+that ships with the compiler itself.
 
 **Designs borrowed rather than code**
 

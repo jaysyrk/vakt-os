@@ -29,7 +29,7 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Install toolchains
-        run: pacman -Syu --noconfirm git rust go base-devel
+        run: pacman -Syu --noconfirm git rust go zig base-devel
 
       - uses: actions/checkout@v4
 
@@ -45,6 +45,13 @@ jobs:
           key: cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-
 
+      - name: Cache zig global cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/zig
+          key: zig-${{ hashFiles('vakt-verify/**') }}
+          restore-keys: zig-
+
       - name: Check formatting
         run: |
           set -eu
@@ -54,6 +61,7 @@ jobs:
           test -z "$(gofmt -l tools)" || {
             echo "::error::gofmt found unformatted files:"; gofmt -l tools; exit 1;
           }
+          (cd vakt-verify && zig fmt --check src/main.zig build.zig)
 
       - name: Rust tests
         run: |
@@ -68,6 +76,10 @@ jobs:
           go vet ./...
           go test ./cmd/...
 
+      - name: Zig tests
+        working-directory: vakt-verify
+        run: zig build test --summary all
+
       - name: Shell scripts parse
         run: bash -n build.sh build-system/*.sh deploy/*.sh
 
@@ -80,7 +92,9 @@ jobs:
           set -eu
           cargo build --release --manifest-path pkg-manager/Cargo.toml
           go build -C tools -buildvcs=false -o "$PWD/tools/bin/zrpkg-server" ./cmd/zrpkg-server/
+          (cd vakt-verify && zig build -Doptimize=ReleaseSmall)
           ZRPKG="$PWD/pkg-manager/target/release/zrpkg"
+          VAKT_VERIFY="$PWD/vakt-verify/zig-out/bin/vakt-verify"
           WORK=$(mktemp -d)
           mkdir -p "$WORK"/{repo,stage,root}
 
@@ -97,6 +111,21 @@ jobs:
                   --description mid  --depends base > /dev/null
           "$ZRPKG" pack "$WORK/stage/tool" "$KEY" -o "$WORK/repo" --version 1.0.0 \
                   --description tool --depends mid  > /dev/null
+
+          # The whole point of vakt-verify: a completely separate
+          # implementation (Zig, not Rust; std.crypto, not ed25519-dalek) has
+          # to agree with zrpkg on every archive it just signed, and has to
+          # independently reject one that was not.
+          for pkg in base mid tool; do
+            "$VAKT_VERIFY" "$WORK/repo/$pkg.zrp" "$WORK/repo/$pkg.json" --pubkey "$PUB" || {
+              echo "vakt-verify disagreed with zrpkg's own signature for $pkg"; exit 1;
+            }
+          done
+          cp "$WORK/repo/tool.zrp" "$WORK/repo/tool-tampered.zrp"
+          echo tampered >> "$WORK/repo/tool-tampered.zrp"
+          if "$VAKT_VERIFY" "$WORK/repo/tool-tampered.zrp" "$WORK/repo/tool.json" --pubkey "$PUB"; then
+            echo "vakt-verify accepted a tampered archive"; exit 1
+          fi
 
           cat > "$WORK/repo/index.json" <<'JSON'
           {"packages":[
@@ -164,7 +193,7 @@ jobs:
     steps:
       - name: Install build dependencies
         run: |
-          pacman -Syu --noconfirm git rust go base-devel sudo \
+          pacman -Syu --noconfirm git rust go zig base-devel sudo \
             grub xorriso cpio gzip mtools wget curl wpa_supplicant kmod \
             bc flex bison openssl perl xz e2fsprogs
 
@@ -181,6 +210,13 @@ jobs:
             ~/.cargo/git
           key: cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-
+
+      - name: Cache zig global cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/zig
+          key: zig-${{ hashFiles('vakt-verify/**') }}
+          restore-keys: zig-
 
       # Keyed on the kernel config too: changing which symbols are requested
       # has to invalidate the object tree, or the ISO would ship a kernel built

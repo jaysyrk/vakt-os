@@ -6,6 +6,8 @@ build-system/keys/
 target/
 tools/bin/
 tools/vakt-audit
+vakt-verify/zig-out/
+vakt-verify/.zig-cache/
 
 # Generated package repository (rebuild with build-system/mkrepo.sh)
 tools/repo/

@@ -86,7 +86,7 @@ copy_deps() {
 }
 
 echo "[+] Installing build dependencies..."
-pacman -S --needed --noconfirm grub xorriso cpio gzip mtools wget curl wpa_supplicant kmod
+pacman -S --needed --noconfirm grub xorriso cpio gzip mtools wget curl wpa_supplicant kmod zig
 if [ "$VAKT_KERNEL" = "custom" ]; then
     pacman -S --needed --noconfirm base-devel bc flex bison openssl perl xz
 fi
@@ -121,6 +121,10 @@ build_as_user() {
 (cd "$PROJECT_ROOT/tools" && for tool in vakt-audit vakt-ids vakt-panel zrpkg-server; do
     build_as_user go build -buildvcs=false -o "bin/$tool" "./cmd/$tool/"
 done)
+# vakt-verify: an independent, from-scratch signature check, written in Zig
+# against only its standard library - no code shared with zrpkg's own (Rust)
+# verifier. See vakt-verify/src/main.zig for why that independence matters.
+(cd "$PROJECT_ROOT/vakt-verify"      && build_as_user zig build -Doptimize=ReleaseSmall)
 
 echo ""
 echo "[+] Building signed package repository..."
@@ -188,13 +192,14 @@ ln -sf /run/resolv.conf "$ROOTFS/etc/resolv.conf"
 ln -sf /proc/self/mounts "$ROOTFS/etc/mtab"
 
 # --- Vakt tools --------------------------------------------------------------
-echo "[+] Injecting zrpkg, vakt-audit, vakt-ids, vakt-panel, vakt-net, vakt-compositor..."
+echo "[+] Injecting zrpkg, vakt-audit, vakt-ids, vakt-panel, vakt-net, vakt-compositor, vakt-verify..."
 copy_deps "$PROJECT_ROOT/pkg-manager/target/release/zrpkg" "$ROOTFS"
 copy_deps "$PROJECT_ROOT/tools/bin/vakt-audit" "$ROOTFS"
 copy_deps "$PROJECT_ROOT/tools/bin/vakt-ids" "$ROOTFS"
 copy_deps "$PROJECT_ROOT/tools/bin/vakt-panel" "$ROOTFS"
 copy_deps "$PROJECT_ROOT/vakt-net/target/release/vakt-net" "$ROOTFS"
 copy_deps "$PROJECT_ROOT/vakt-compositor/target/release/vakt-compositor" "$ROOTFS"
+copy_deps "$PROJECT_ROOT/vakt-verify/zig-out/bin/vakt-verify" "$ROOTFS"
 cp "$PROJECT_ROOT/build-system/fastfetch/vakt_logo.txt" "$ROOTFS/etc/vakt_logo.txt"
 
 # Trust anchor for zrpkg. Without it zrpkg refuses to install anything at all,

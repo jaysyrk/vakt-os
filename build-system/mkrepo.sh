@@ -16,6 +16,11 @@ KEY_FILE="$KEY_DIR/repo.key"
 PUB_FILE="$KEY_DIR/repo.pub"
 STAGE="/tmp/vakt-pkgstage"
 ZRPKG="$PROJECT_ROOT/pkg-manager/target/release/zrpkg"
+# Independent second opinion on every signature this script produces - see
+# vakt-verify/src/main.zig for why a from-scratch, separately-implemented
+# verifier is worth running here rather than trusting zrpkg to check its own
+# work. Optional: if it was never built, packaging proceeds without it.
+VAKT_VERIFY="$PROJECT_ROOT/vakt-verify/zig-out/bin/vakt-verify"
 
 echo "========================================"
 echo "     Vakt OS Repository Builder         "
@@ -43,6 +48,7 @@ PACKAGES=(
     "vakt-audit|$PROJECT_ROOT/tools/bin/vakt-audit|1.0.0|CIS-style security compliance auditor.|"
     "vakt-ids|$PROJECT_ROOT/tools/bin/vakt-ids|1.0.0|Filesystem integrity intrusion detection daemon.|"
     "vakt-compositor|$PROJECT_ROOT/vakt-compositor/target/release/vakt-compositor|0.1.0|Raw framebuffer graphical compositor.|"
+    "vakt-verify|$PROJECT_ROOT/vakt-verify/zig-out/bin/vakt-verify|0.1.0|Independent Ed25519 package signature verifier.|"
     "vakt-ai|$PROJECT_ROOT/tools/bin/vakt-ai|0.1.0|Vakt OS AI assistant.|"
 )
 
@@ -81,6 +87,27 @@ for entry in "${PACKAGES[@]}"; do
     # Every package is signed with the same key, so capture it once.
     if [ -z "$PUB_KEY" ]; then
         PUB_KEY=$(echo "$OUTPUT" | awk '/^Public key:/ {print $3}')
+    fi
+
+    # A second, independently-implemented verifier checking what zrpkg just
+    # signed. Disagreement here means a bug in one of the two implementations,
+    # and it is cheap to catch it now rather than after the repository is
+    # published.
+    #
+    # The exit status has to come from vakt-verify itself, not from `sed` -
+    # piping straight into `sed 's/^/    /'` would make `if ! cmd | sed` test
+    # sed's (always zero) exit code and silently ignore a real failure here.
+    # Capturing the output as the condition of the `if` sidesteps that, and
+    # also keeps `set -e` from aborting the script before the diagnostic below
+    # gets a chance to print.
+    if [ -x "$VAKT_VERIFY" ]; then
+        if VERIFY_OUTPUT=$("$VAKT_VERIFY" "$REPO_DIR/$name.zrp" "$REPO_DIR/$name.json" --pubkey "$PUB_KEY" 2>&1); then
+            echo "$VERIFY_OUTPUT" | sed 's/^/    /'
+        else
+            echo "$VERIFY_OUTPUT" | sed 's/^/    /'
+            echo "[!] vakt-verify disagrees with zrpkg's own signature for $name; refusing to publish."
+            exit 1
+        fi
     fi
 
     # Render the dependency list as a JSON array: "a,b" -> ["a","b"], "" -> [].

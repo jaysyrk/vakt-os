@@ -12,6 +12,7 @@ COPY build-system/fastfetch/config.jsonc /etc/fastfetch/
 COPY pkg-manager/target/release/zrpkg /usr/local/bin/
 COPY tools/bin/vakt-audit /usr/local/bin/
 COPY tools/bin/vakt-ids /usr/local/bin/
+COPY vakt-verify/zig-out/bin/vakt-verify /usr/local/bin/
 
 # Set up a badass custom prompt and auto-run fastfetch
 RUN echo 'export PS1="\[\e[1;31m\][Vakt-OS]\[\e[0m\] \w # "' >> /root/.bashrc

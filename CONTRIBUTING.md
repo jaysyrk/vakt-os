@@ -16,15 +16,21 @@ third-party section, with a link to where it came from.
 
 ## Getting set up
 
-You need a Rust toolchain, Go, and — for building an image — an Arch host with
-root. The code builds and the tests run anywhere; only `build.sh` is
+You need a Rust toolchain, Go, Zig 0.16, and — for building an image — an Arch
+host with root. The code builds and the tests run anywhere; only `build.sh` is
 Arch-specific.
+
+Zig's standard library moves fast between versions - `vakt-verify` is written
+against 0.16 specifically (its process/IO entry-point convention changed
+again as recently as this release), so a much older or newer compiler may not
+build it. Arch's `extra/zig` package tracks this.
 
 ```bash
 cargo test --manifest-path vakt-init/Cargo.toml
 cargo test --manifest-path pkg-manager/Cargo.toml
 cargo test --manifest-path vakt-net/Cargo.toml
 cd tools && go test ./cmd/...
+cd vakt-verify && zig build test
 ```
 
 Building an image, which is the only way to test the parts that need to be
@@ -47,6 +53,7 @@ for c in pkg-manager vakt-init vakt-net vakt-compositor; do
 done
 gofmt -l tools            # must print nothing
 cd tools && go vet ./...
+(cd vakt-verify && zig fmt --check src/main.zig build.zig)
 bash -n build.sh build-system/*.sh deploy/*.sh
 ```
 
@@ -72,10 +79,18 @@ network never comes up, when a daemon will not die. "It cannot happen" is not a
 plan.
 
 **Nothing widens the security model quietly.** The read-only root, the
-unprivileged panel, the Landlock rulesets, and mandatory package signatures are
-the four things this project exists to demonstrate. A change that punches
-through one of them needs to say so plainly in the pull request, and needs a
-reason better than convenience.
+unprivileged panel, the Landlock rulesets, mandatory package signatures, and
+the independent Zig re-verification of those signatures are the five things
+this project exists to demonstrate. A change that punches through one of them
+needs to say so plainly in the pull request, and needs a reason better than
+convenience.
+
+**A from-scratch second implementation only earns its place if it stays
+independent.** `vakt-verify` exists to catch a mistake `zrpkg` alone would
+not: it must never import `zrpkg`'s code, read its intermediate state, or
+otherwise become a second copy of the same logic wearing a different
+language. If you touch one, ask whether the other still constitutes a
+genuinely separate check.
 
 ## Where things live
 
@@ -85,6 +100,7 @@ reason better than convenience.
 | `pkg-manager/` | `zrpkg`: dependency resolution, signature verification, install and removal |
 | `vakt-net/` | The networking daemon and its Landlock sandbox |
 | `vakt-compositor/` | Framebuffer rendering |
+| `vakt-verify/` | Independent Ed25519/SHA-256 package signature verifier (Zig) |
 | `tools/cmd/` | The Go tools: panel, audit, IDS, repository server |
 | `build-system/` | Kernel configuration and builder, repository builder, logo |
 | `deploy/` | Running the repository on a rented server: systemd unit, publish script |
