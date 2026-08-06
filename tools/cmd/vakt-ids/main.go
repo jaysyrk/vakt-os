@@ -68,6 +68,9 @@ func main() {
 	available := waitForRoots(roots, *once)
 	if len(available) == 0 {
 		log.Print("No watched directory exists; nothing to monitor.")
+		// Still a settled answer: boot must not wait for a monitor that has
+		// decided there is nothing to monitor.
+		notifyReady("no watched directory exists")
 		return
 	}
 
@@ -97,6 +100,11 @@ func main() {
 		log.Printf("Loaded baseline from %s (%d files, taken %s).",
 			statePath, len(base.Files), base.Created.Format(time.RFC3339))
 	}
+
+	// The baseline is what makes this daemon useful; before it exists there is
+	// nothing to compare against, so this is the first moment it is genuinely
+	// up rather than merely running.
+	notifyReady(readyStatus(len(base.Files), available))
 
 	if *once {
 		runScan(base, available, statePath)

@@ -1,20 +1,26 @@
 //! A minimal service supervisor for vakt-init.
 //!
 //! This is deliberately small: it spawns background daemons, records their
-//! PIDs, reaps them when they die, and restarts the ones that are supposed to
-//! stay up.
+//! PIDs, captures their output into a size-capped log, reaps them when they
+//! die, restarts the ones that are supposed to stay up, and stops all of them
+//! in order when the system goes down.
 //!
 //! Reaping is done with `Child::try_wait()` on each tracked PID rather than a
 //! blanket `waitpid(-1)`. As PID 1 we could reap everything, but the main
-//! thread runs `vakt-panel` via `Command::status()`, which needs to collect
-//! that child's exit code itself - a wildcard reaper in this thread would race
-//! it and steal the result.
+//! thread runs `vakt-panel` via `Child::wait()`, which needs to collect that
+//! child's exit code itself - a wildcard reaper in this thread would race it
+//! and steal the result.
 
+use crate::logfile::{self, BoundedLog};
+use nix::sys::signal::{Signal, kill};
+use nix::unistd::Pid;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// Where PID files, logs, and the status summary live.
@@ -22,12 +28,14 @@ const RUN_DIR: &str = "/run";
 /// Summary file read by vakt-panel's Services page.
 const STATUS_NAME: &str = "services.status";
 
-/// How often the supervisor checks on its children.
+/// How often the supervisor checks on its children when nothing wakes it.
 const TICK: Duration = Duration::from_secs(2);
 /// A service that dies this many times inside `CRASH_WINDOW` is given up on,
 /// so a daemon that cannot start never becomes a spin loop.
 const MAX_RESTARTS: u32 = 5;
 const CRASH_WINDOW: Duration = Duration::from_secs(60);
+/// How long a daemon gets to exit on SIGTERM before it is killed outright.
+const STOP_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 pub struct Service {
@@ -36,6 +44,9 @@ pub struct Service {
     pub args: &'static [&'static str],
     /// Whether to restart the service when it exits.
     pub respawn: bool,
+    /// Whether this service reports readiness over `/run/init.sock`. Boot waits
+    /// for the ones that do, and does not wait for the ones that do not.
+    pub notifies: bool,
     pub description: &'static str,
 }
 
@@ -45,6 +56,8 @@ enum State {
     Exited,
     /// Crashed too often to keep restarting.
     Failed,
+    /// Stopped deliberately during shutdown.
+    Stopped,
 }
 
 impl fmt::Display for State {
@@ -53,7 +66,203 @@ impl fmt::Display for State {
             State::Running => "running",
             State::Exited => "exited",
             State::Failed => "failed",
+            State::Stopped => "stopped",
         })
+    }
+}
+
+/// What the supervisor is doing, and what it has been asked to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Running,
+    /// Shutdown has been requested; the supervisor is bringing daemons down.
+    Stopping,
+    /// Every supervised daemon has exited.
+    Stopped,
+}
+
+#[derive(Default)]
+struct Shared {
+    phase: Option<Phase>,
+    /// Every service that is supposed to report readiness.
+    expected: BTreeSet<String>,
+    /// Those of them boot is still waiting on. A service that fails outright is
+    /// dropped from here without ever joining `ready`, which is what stops boot
+    /// waiting out the full timeout for a daemon already known to be dead.
+    awaiting: BTreeSet<String>,
+    /// Live child PIDs, so a notification can be attributed to a service.
+    pids: BTreeMap<u32, String>,
+    ready: BTreeSet<String>,
+    /// The most recent `STATUS=` line each service sent.
+    status: BTreeMap<String, String>,
+}
+
+/// The supervisor's shared state.
+///
+/// Three threads touch it: the supervisor itself, the thread reading the
+/// readiness socket, and whichever thread is running the shutdown sequence.
+/// One mutex and one condition variable are enough for all of it, and keeping
+/// it to one of each is what makes the lock ordering trivially correct.
+pub struct Control {
+    shared: Mutex<Shared>,
+    changed: Condvar,
+}
+
+impl Control {
+    pub fn new(specs: &[Service]) -> Arc<Control> {
+        let expected: BTreeSet<String> = specs
+            .iter()
+            .filter(|s| s.notifies)
+            .map(|s| s.name.to_string())
+            .collect();
+
+        Arc::new(Control {
+            shared: Mutex::new(Shared {
+                phase: Some(Phase::Running),
+                awaiting: expected.clone(),
+                expected,
+                ..Shared::default()
+            }),
+            changed: Condvar::new(),
+        })
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Shared> {
+        // A panicking supervisor thread must not wedge shutdown, so a poisoned
+        // lock is taken anyway: the state behind it is plain collections that
+        // cannot be left in a half-updated shape by a panic between statements.
+        self.shared.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn phase(&self) -> Phase {
+        self.lock().phase.unwrap_or(Phase::Running)
+    }
+
+    /// Records a notification and returns the service it was attributed to.
+    ///
+    /// `pid` comes from the kernel and is authoritative. `name` is the sender's
+    /// own claim and is only believed when there is no pid to check it against.
+    pub fn note_ready(
+        &self,
+        pid: Option<u32>,
+        name: Option<&str>,
+        status: Option<&str>,
+    ) -> Option<String> {
+        let mut shared = self.lock();
+
+        let service = match pid.and_then(|p| shared.pids.get(&p).cloned()) {
+            Some(known) => known,
+            None => name?.to_string(),
+        };
+
+        shared.awaiting.remove(&service);
+        shared.ready.insert(service.clone());
+        if let Some(status) = status {
+            shared.status.insert(service.clone(), status.to_string());
+        }
+        self.changed.notify_all();
+        Some(service)
+    }
+
+    fn register(&self, pid: u32, name: &str) {
+        let mut shared = self.lock();
+        shared.pids.insert(pid, name.to_string());
+    }
+
+    /// Forgets a service's readiness when it exits: a daemon that has been
+    /// restarted has not reported anything yet.
+    fn deregister(&self, pid: Option<u32>, name: &str) {
+        let mut shared = self.lock();
+        if let Some(pid) = pid {
+            shared.pids.remove(&pid);
+        }
+        shared.ready.remove(name);
+        self.changed.notify_all();
+    }
+
+    /// Stops boot from waiting on a service that is never going to report.
+    fn settle(&self, name: &str) {
+        let mut shared = self.lock();
+        shared.awaiting.remove(name);
+        self.changed.notify_all();
+    }
+
+    fn snapshot(&self, name: &str) -> (bool, Option<String>) {
+        let shared = self.lock();
+        (
+            shared.ready.contains(name),
+            shared.status.get(name).cloned(),
+        )
+    }
+
+    /// Blocks until nothing is left to wait for, or `timeout` expires.
+    ///
+    /// Returns whether every notifying service actually reported ready, which
+    /// is not the same as the wait being over: a service that failed to start
+    /// stops boot waiting for it, but it is not ready and never will be.
+    pub fn wait_until_ready(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut shared = self.lock();
+
+        while !shared.awaiting.is_empty() {
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                break;
+            };
+            let (guard, _) = self
+                .changed
+                .wait_timeout(shared, remaining)
+                .unwrap_or_else(|e| e.into_inner());
+            shared = guard;
+        }
+        shared.expected.is_subset(&shared.ready)
+    }
+
+    /// Asks the supervisor to bring everything down and stop respawning.
+    pub fn request_stop(&self) {
+        let mut shared = self.lock();
+        if shared.phase == Some(Phase::Running) {
+            shared.phase = Some(Phase::Stopping);
+        }
+        self.changed.notify_all();
+    }
+
+    fn mark_stopped(&self) {
+        let mut shared = self.lock();
+        shared.phase = Some(Phase::Stopped);
+        self.changed.notify_all();
+    }
+
+    /// Blocks until the supervisor reports everything down, or `timeout`
+    /// expires. Returns whether it got there.
+    pub fn wait_until_stopped(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut shared = self.lock();
+
+        while shared.phase != Some(Phase::Stopped) {
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                return false;
+            };
+            let (guard, _) = self
+                .changed
+                .wait_timeout(shared, remaining)
+                .unwrap_or_else(|e| e.into_inner());
+            shared = guard;
+        }
+        true
+    }
+
+    /// The supervisor's sleep between passes. Returns early the moment a
+    /// shutdown is requested, so going down does not wait out a whole tick.
+    fn wait_tick(&self, tick: Duration) -> Phase {
+        let shared = self.lock();
+        if shared.phase == Some(Phase::Stopping) {
+            return Phase::Stopping;
+        }
+        let (shared, _) = self
+            .changed
+            .wait_timeout(shared, tick)
+            .unwrap_or_else(|e| e.into_inner());
+        shared.phase.unwrap_or(Phase::Running)
     }
 }
 
@@ -81,23 +290,43 @@ impl Managed {
         self.child.as_ref().map(|c| c.id())
     }
 
-    /// Spawns the daemon with its output captured to /run/<name>.log.
-    fn start(&mut self) {
+    /// Spawns the daemon with its output captured to a capped /run/<name>.log.
+    ///
+    /// Both stdout and stderr are pointed at one pipe we create ourselves, and
+    /// a thread drains it. Handing the daemon a log file directly would be
+    /// simpler, but there would then be nothing between it and the tmpfs to
+    /// enforce a size limit.
+    fn start(&mut self, control: &Control) {
         let log_path = self.log_path();
-        let stdout = File::create(&log_path).ok();
-        let stderr = stdout.as_ref().and_then(|f| f.try_clone().ok());
+
+        let piped =
+            nix::unistd::pipe()
+                .map_err(std::io::Error::from)
+                .and_then(|(reader, writer)| {
+                    let duplicate = writer.try_clone()?;
+                    let log = BoundedLog::create(&log_path, logfile::BUDGET)?;
+                    Ok((reader, writer, duplicate, log))
+                });
 
         let mut cmd = Command::new(self.spec.program);
         cmd.args(self.spec.args);
         cmd.stdin(Stdio::null());
-        match (stdout, stderr) {
-            (Some(out), Some(err)) => {
-                cmd.stdout(Stdio::from(out)).stderr(Stdio::from(err));
+
+        let reader_and_log = match piped {
+            Ok((reader, writer, duplicate, log)) => {
+                cmd.stdout(Stdio::from(writer))
+                    .stderr(Stdio::from(duplicate));
+                Some((reader, log))
             }
-            _ => {
+            Err(e) => {
+                println!(
+                    "[Vakt-Init] \x1b[1;33mNo log capture for '{}': {}\x1b[0m",
+                    self.spec.name, e
+                );
                 cmd.stdout(Stdio::null()).stderr(Stdio::null());
+                None
             }
-        }
+        };
 
         match cmd.spawn() {
             Ok(child) => {
@@ -107,9 +336,16 @@ impl Managed {
                     "[Vakt-Init] Started service '{}' (pid {}).",
                     self.spec.name, pid
                 );
+                control.register(pid, self.spec.name);
                 self.child = Some(child);
                 self.state = State::Running;
                 self.detail = format!("logging to {}", log_path.display());
+
+                // Only now that the child owns the write end will the drain
+                // thread see EOF when the child exits.
+                if let Some((reader, log)) = reader_and_log {
+                    std::thread::spawn(move || logfile::drain(File::from(reader), log));
+                }
             }
             Err(e) => {
                 println!(
@@ -119,6 +355,7 @@ impl Managed {
                 self.child = None;
                 self.state = State::Failed;
                 self.detail = e.to_string();
+                control.settle(self.spec.name);
             }
         }
     }
@@ -131,14 +368,15 @@ impl Managed {
 pub struct Supervisor {
     services: Vec<Managed>,
     run_dir: PathBuf,
+    control: Arc<Control>,
 }
 
 impl Supervisor {
-    pub fn new(specs: &[Service]) -> Self {
-        Supervisor::with_run_dir(specs, PathBuf::from(RUN_DIR))
+    pub fn new(specs: &[Service], control: Arc<Control>) -> Self {
+        Supervisor::with_run_dir(specs, control, PathBuf::from(RUN_DIR))
     }
 
-    fn with_run_dir(specs: &[Service], run_dir: PathBuf) -> Self {
+    fn with_run_dir(specs: &[Service], control: Arc<Control>, run_dir: PathBuf) -> Self {
         Supervisor {
             services: specs
                 .iter()
@@ -153,26 +391,32 @@ impl Supervisor {
                 })
                 .collect(),
             run_dir,
+            control,
         }
     }
 
-    /// Starts every service, then supervises them forever. Intended to be run
-    /// on its own thread so the console stays free for the panel.
-    pub fn run(mut self) -> ! {
+    /// Starts every service and supervises them until shutdown is requested,
+    /// then stops them and returns. Intended to be run on its own thread so
+    /// the console stays free for the panel.
+    pub fn run(mut self) {
         self.start_all();
 
-        loop {
-            std::thread::sleep(TICK);
+        while self.control.wait_tick(TICK) != Phase::Stopping {
             if self.reap() {
                 self.write_status();
             }
         }
+
+        self.stop_all();
+        self.write_status();
+        self.control.mark_stopped();
     }
 
     fn start_all(&mut self) {
         let _ = std::fs::create_dir_all(&self.run_dir);
+        let control = Arc::clone(&self.control);
         for service in &mut self.services {
-            service.start();
+            service.start(&control);
         }
         self.write_status();
     }
@@ -181,6 +425,7 @@ impl Supervisor {
     /// Returns true when anything changed.
     fn reap(&mut self) -> bool {
         let mut changed = false;
+        let control = Arc::clone(&self.control);
 
         for service in &mut self.services {
             let Some(child) = service.child.as_mut() else {
@@ -191,6 +436,7 @@ impl Supervisor {
                 // Still running.
                 Ok(None) => {}
                 Ok(Some(exit)) => {
+                    let pid = Some(child.id());
                     println!(
                         "[Vakt-Init] Service '{}' exited ({}).",
                         service.spec.name, exit
@@ -199,9 +445,11 @@ impl Supervisor {
                     service.clear_pid_file();
                     service.state = State::Exited;
                     service.detail = format!("exited with {}", exit);
+                    control.deregister(pid, service.spec.name);
                     changed = true;
 
                     if !service.spec.respawn {
+                        control.settle(service.spec.name);
                         continue;
                     }
 
@@ -219,8 +467,8 @@ impl Supervisor {
                             service.spec.name, service.restarts
                         );
                         service.state = State::Failed;
-                        service.detail =
-                            format!("crashed {} times in under 60s", service.restarts);
+                        service.detail = format!("crashed {} times in under 60s", service.restarts);
+                        control.settle(service.spec.name);
                         continue;
                     }
 
@@ -228,13 +476,16 @@ impl Supervisor {
                         "[Vakt-Init] Restarting '{}' (attempt {}).",
                         service.spec.name, service.restarts
                     );
-                    service.start();
+                    service.start(&control);
                 }
                 Err(e) => {
+                    let pid = Some(child.id());
                     service.child = None;
                     service.clear_pid_file();
                     service.state = State::Failed;
                     service.detail = format!("wait failed: {}", e);
+                    control.deregister(pid, service.spec.name);
+                    control.settle(service.spec.name);
                     changed = true;
                 }
             }
@@ -243,18 +494,94 @@ impl Supervisor {
         changed
     }
 
+    /// Asks every daemon to exit, then makes sure it did.
+    ///
+    /// SIGTERM goes to all of them at once rather than one at a time, so the
+    /// grace period is spent once for the whole system instead of once per
+    /// service. Anything still alive at the end of it is not going to exit on
+    /// its own and gets SIGKILL.
+    fn stop_all(&mut self) {
+        let live: Vec<&str> = self
+            .services
+            .iter()
+            .filter(|s| s.child.is_some())
+            .map(|s| s.spec.name)
+            .collect();
+
+        if live.is_empty() {
+            return;
+        }
+        println!("[Vakt-Init] Stopping services: {}.", live.join(", "));
+
+        for service in &mut self.services {
+            if let Some(child) = service.child.as_ref() {
+                let _ = kill(Pid::from_raw(child.id() as i32), Signal::SIGTERM);
+            }
+        }
+
+        let deadline = Instant::now() + STOP_GRACE;
+        while Instant::now() < deadline {
+            if self.collect_stopped() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        for service in &mut self.services {
+            let Some(child) = service.child.as_mut() else {
+                continue;
+            };
+            println!(
+                "[Vakt-Init] \x1b[1;33mService '{}' ignored SIGTERM; killing it.\x1b[0m",
+                service.spec.name
+            );
+            let _ = child.kill();
+            let _ = child.wait();
+            service.child = None;
+            service.clear_pid_file();
+            service.state = State::Stopped;
+            service.detail = "killed after refusing to stop".to_string();
+        }
+    }
+
+    /// Reaps daemons that have exited during shutdown. Returns true once none
+    /// are left.
+    fn collect_stopped(&mut self) -> bool {
+        let mut all_gone = true;
+        for service in &mut self.services {
+            let Some(child) = service.child.as_mut() else {
+                continue;
+            };
+            match child.try_wait() {
+                Ok(Some(_)) | Err(_) => {
+                    service.child = None;
+                    service.clear_pid_file();
+                    service.state = State::Stopped;
+                    service.detail = "stopped for shutdown".to_string();
+                }
+                Ok(None) => all_gone = false,
+            }
+        }
+        all_gone
+    }
+
     /// Writes a one-line-per-service summary for the panel to display.
     fn write_status(&self) {
         let mut body = String::new();
         for service in &self.services {
             let pid = service.pid().map(|p| p.to_string()).unwrap_or_default();
+            let (ready, reported) = self.control.snapshot(service.spec.name);
+
+            let readiness = match (service.spec.notifies, ready) {
+                (false, _) => "n/a",
+                (true, true) => "ready",
+                (true, false) => "waiting",
+            };
+            let detail = reported.unwrap_or_else(|| service.spec.description.to_string());
+
             body.push_str(&format!(
-                "{}\t{}\t{}\t{}\t{}\n",
-                service.spec.name,
-                service.state,
-                pid,
-                service.restarts,
-                service.spec.description
+                "{}\t{}\t{}\t{}\t{}\t{}\n",
+                service.spec.name, service.state, pid, service.restarts, readiness, detail
             ));
         }
 
@@ -271,20 +598,41 @@ impl Supervisor {
     }
 }
 
+/// The services vakt-init brings up at boot.
+pub const DEFAULT_SERVICES: &[Service] = &[
+    Service {
+        name: "vakt-net",
+        program: "vakt-net",
+        args: &[],
+        respawn: true,
+        notifies: true,
+        description: "Wi-Fi and DHCP negotiation",
+    },
+    Service {
+        name: "vakt-ids",
+        program: "vakt-ids",
+        args: &["--watch", "/persistent"],
+        respawn: true,
+        notifies: true,
+        description: "Filesystem integrity monitor",
+    },
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// A unique scratch directory per test, so the run dirs never collide.
     fn scratch(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "vakt-init-test-{}-{}",
-            tag,
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("vakt-init-test-{}-{}", tag, std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn supervisor(specs: &[Service], dir: PathBuf) -> Supervisor {
+        Supervisor::with_run_dir(specs, Control::new(specs), dir)
     }
 
     /// Drives reap() until the service leaves the Running state, so the tests
@@ -304,6 +652,7 @@ mod tests {
         program: "/bin/sh",
         args: &["-c", "exit 3"],
         respawn: false,
+        notifies: false,
         description: "exits immediately, never restarted",
     }];
 
@@ -312,6 +661,7 @@ mod tests {
         program: "/bin/sh",
         args: &["-c", "exit 1"],
         respawn: true,
+        notifies: false,
         description: "always fails to stay up",
     }];
 
@@ -320,13 +670,14 @@ mod tests {
         program: "/bin/sh",
         args: &["-c", "sleep 30"],
         respawn: true,
+        notifies: false,
         description: "stays up",
     }];
 
     #[test]
     fn running_service_writes_a_pid_file_and_is_reported_running() {
         let dir = scratch("running");
-        let mut sup = Supervisor::with_run_dir(LONG_RUNNING, dir.clone());
+        let mut sup = supervisor(LONG_RUNNING, dir.clone());
         sup.start_all();
 
         let pid_file = dir.join("sleeper.pid");
@@ -339,7 +690,10 @@ mod tests {
         assert_eq!(Some(pid), sup.services[0].pid());
 
         // A healthy service produces no state change.
-        assert!(!sup.reap(), "reap should report no change for a live service");
+        assert!(
+            !sup.reap(),
+            "reap should report no change for a live service"
+        );
         assert_eq!(sup.services[0].state, State::Running);
 
         let status = std::fs::read_to_string(dir.join(STATUS_NAME)).unwrap();
@@ -355,7 +709,7 @@ mod tests {
     #[test]
     fn exited_service_without_respawn_is_reaped_and_left_alone() {
         let dir = scratch("oneshot");
-        let mut sup = Supervisor::with_run_dir(ONESHOT, dir.clone());
+        let mut sup = supervisor(ONESHOT, dir.clone());
         sup.start_all();
 
         reap_until_settled(&mut sup, 40);
@@ -371,7 +725,7 @@ mod tests {
     #[test]
     fn crash_looping_service_is_restarted_then_given_up_on() {
         let dir = scratch("crasher");
-        let mut sup = Supervisor::with_run_dir(CRASHER, dir.clone());
+        let mut sup = supervisor(CRASHER, dir.clone());
         sup.start_all();
 
         // Each reap collects the corpse and starts a replacement, until the
@@ -409,10 +763,11 @@ mod tests {
             program: "/nonexistent/vakt-does-not-exist",
             args: &[],
             respawn: true,
+            notifies: false,
             description: "binary is not installed",
         }];
 
-        let mut sup = Supervisor::with_run_dir(MISSING, dir.clone());
+        let mut sup = supervisor(MISSING, dir.clone());
         sup.start_all();
 
         assert_eq!(sup.services[0].state, State::Failed);
@@ -421,15 +776,15 @@ mod tests {
     }
 
     /// The reason this supervisor reaps per-PID instead of using waitpid(-1):
-    /// vakt-init's main thread collects vakt-panel's exit code with
-    /// Command::status() while the supervisor runs alongside it. A wildcard
-    /// reaper would race that call and swallow the result.
+    /// vakt-init's main thread collects vakt-panel's exit code while the
+    /// supervisor runs alongside it. A wildcard reaper would race that call and
+    /// swallow the result.
     #[test]
     fn supervisor_thread_does_not_steal_foreground_exit_codes() {
         let dir = scratch("coexist");
-        std::thread::spawn(move || {
-            Supervisor::with_run_dir(LONG_RUNNING, dir).run();
-        });
+        let sup = supervisor(LONG_RUNNING, dir);
+        let control = Arc::clone(&sup.control);
+        let supervising = std::thread::spawn(move || sup.run());
 
         // Span more than one supervisor TICK so its reap pass definitely
         // overlaps the foreground children below.
@@ -449,6 +804,9 @@ mod tests {
             std::thread::sleep(Duration::from_millis(200));
         }
         assert!(rounds > 1, "test did not run long enough to be meaningful");
+
+        control.request_stop();
+        supervising.join().expect("supervisor thread should finish");
     }
 
     #[test]
@@ -457,34 +815,166 @@ mod tests {
         const TALKER: &[Service] = &[Service {
             name: "talker",
             program: "/bin/sh",
-            args: &["-c", "echo hello-from-service"],
+            args: &["-c", "echo hello-from-service; echo to-stderr >&2"],
             respawn: false,
-            description: "writes to stdout",
+            notifies: false,
+            description: "writes to stdout and stderr",
         }];
 
-        let mut sup = Supervisor::with_run_dir(TALKER, dir.clone());
+        let mut sup = supervisor(TALKER, dir.clone());
         sup.start_all();
         reap_until_settled(&mut sup, 40);
 
-        let log = std::fs::read_to_string(dir.join("talker.log")).unwrap();
+        // The drain thread may still be finishing when the child is reaped.
+        let log_path = dir.join("talker.log");
+        let mut log = String::new();
+        for _ in 0..40 {
+            log = std::fs::read_to_string(&log_path).unwrap_or_default();
+            if log.contains("hello-from-service") && log.contains("to-stderr") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
         assert!(log.contains("hello-from-service"), "got: {}", log);
+        assert!(
+            log.contains("to-stderr"),
+            "stderr must be captured too: {}",
+            log
+        );
+    }
+
+    /// A daemon that will not stop printing must not be able to fill the
+    /// tmpfs that /run lives on.
+    #[test]
+    fn a_runaway_daemons_log_is_capped() {
+        let dir = scratch("runaway");
+        const NOISY: &[Service] = &[Service {
+            name: "noisy",
+            program: "/bin/sh",
+            args: &[
+                "-c",
+                "i=0; while [ $i -lt 40000 ]; do \
+                 echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; \
+                 i=$((i+1)); done",
+            ],
+            respawn: false,
+            notifies: false,
+            description: "prints far more than it should",
+        }];
+
+        let mut sup = supervisor(NOISY, dir.clone());
+        sup.start_all();
+        reap_until_settled(&mut sup, 400);
+
+        // Give the drain thread a moment to consume what is left in the pipe.
+        std::thread::sleep(Duration::from_millis(500));
+
+        let size = |name: &str| {
+            std::fs::metadata(dir.join(name))
+                .map(|m| m.len())
+                .unwrap_or(0)
+        };
+        let total = size("noisy.log") + size("noisy.log.1");
+        assert!(
+            total <= logfile::BUDGET + 64 * 1024,
+            "log capture grew to {} bytes, past the {} byte budget",
+            total,
+            logfile::BUDGET
+        );
+        assert!(total > 0, "nothing was captured at all");
+    }
+
+    #[test]
+    fn shutdown_stops_running_services_and_reports_stopped() {
+        let dir = scratch("shutdown");
+        let sup = supervisor(LONG_RUNNING, dir.clone());
+        let control = Arc::clone(&sup.control);
+        let supervising = std::thread::spawn(move || sup.run());
+
+        // Let it get the sleeper up before asking for shutdown.
+        std::thread::sleep(Duration::from_millis(200));
+        control.request_stop();
+
+        assert!(
+            control.wait_until_stopped(Duration::from_secs(10)),
+            "supervisor never reported everything stopped"
+        );
+        supervising.join().expect("supervisor thread should finish");
+
+        assert!(
+            !dir.join("sleeper.pid").exists(),
+            "pid file should be gone once the service is stopped"
+        );
+        let status = std::fs::read_to_string(dir.join(STATUS_NAME)).unwrap();
+        assert!(status.contains("stopped"), "got: {}", status);
+    }
+
+    /// Boot must not sit waiting for a service that has already given up.
+    #[test]
+    fn readiness_wait_gives_up_on_a_service_that_cannot_start() {
+        let dir = scratch("readiness-failed");
+        const NOTIFIER: &[Service] = &[Service {
+            name: "notifier",
+            program: "/nonexistent/vakt-does-not-exist",
+            args: &[],
+            respawn: true,
+            notifies: true,
+            description: "would report readiness if it could run",
+        }];
+
+        let mut sup = supervisor(NOTIFIER, dir);
+        let control = Arc::clone(&sup.control);
+        sup.start_all();
+
+        let waited = Instant::now();
+        assert!(
+            !control.wait_until_ready(Duration::from_secs(5)),
+            "a service that never started cannot be ready"
+        );
+        assert!(
+            waited.elapsed() < Duration::from_secs(2),
+            "waited {:?} for a service already known to have failed",
+            waited.elapsed()
+        );
+    }
+
+    #[test]
+    fn readiness_is_attributed_by_pid_not_by_claimed_name() {
+        const TWO: &[Service] = &[
+            Service {
+                name: "first",
+                program: "/bin/true",
+                args: &[],
+                respawn: false,
+                notifies: true,
+                description: "one",
+            },
+            Service {
+                name: "second",
+                program: "/bin/true",
+                args: &[],
+                respawn: false,
+                notifies: true,
+                description: "two",
+            },
+        ];
+
+        let control = Control::new(TWO);
+        control.register(4242, "first");
+
+        // The sender claims to be "second"; the kernel says it is pid 4242,
+        // which the supervisor knows is "first". The kernel wins.
+        let attributed = control.note_ready(Some(4242), Some("second"), Some("up"));
+        assert_eq!(attributed.as_deref(), Some("first"));
+        assert_eq!(control.snapshot("first"), (true, Some("up".to_string())));
+        assert_eq!(control.snapshot("second"), (false, None));
+
+        // With no credentials there is nothing to check the claim against, so
+        // the name is the only identity available.
+        assert_eq!(
+            control.note_ready(None, Some("second"), None).as_deref(),
+            Some("second")
+        );
+        assert!(control.wait_until_ready(Duration::from_millis(10)));
     }
 }
-
-/// The services vakt-init brings up at boot.
-pub const DEFAULT_SERVICES: &[Service] = &[
-    Service {
-        name: "vakt-net",
-        program: "vakt-net",
-        args: &[],
-        respawn: true,
-        description: "Wi-Fi and DHCP negotiation",
-    },
-    Service {
-        name: "vakt-ids",
-        program: "vakt-ids",
-        args: &["--watch", "/persistent"],
-        respawn: true,
-        description: "Filesystem integrity monitor",
-    },
-];

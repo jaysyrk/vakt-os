@@ -1,17 +1,60 @@
+// zrpkg-server publishes a signed Vakt OS package repository over HTTP.
+//
+// It started life as a convenience for handing packages to a VM on the same
+// laptop, where http.FileServer over a directory was entirely adequate. Serving
+// the same directory from a rented server is a different problem: the listener
+// is reachable by anyone, directory listings enumerate what you have, and a
+// process with no timeouts is a slow-loris away from being unavailable.
+//
+// So this serves a deliberately small surface. Read-only methods, a flat
+// namespace, two file extensions, no listings, bounded timeouts, and optional
+// TLS for when there is no reverse proxy in front of it.
+//
+// Note what it does not do: authentication. Packages are signed and clients
+// verify them against a trust anchor, so the repository is public data. Keep
+// the signing key off this machine and there is nothing here worth stealing.
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"path"
 	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+)
+
+// The only extensions a repository consists of: <name>.zrp archives and
+// <name>.json manifests, of which index.json is one. Anything else in the
+// directory - a stray key, an editor backup, a note to self - is not served.
+var servedExtensions = map[string]bool{
+	".zrp":  true,
+	".json": true,
+}
+
+const (
+	readTimeout     = 15 * time.Second
+	writeTimeout    = 5 * time.Minute // a .zrp over a slow link
+	idleTimeout     = 60 * time.Second
+	headerTimeout   = 10 * time.Second
+	shutdownTimeout = 10 * time.Second
 )
 
 func main() {
 	dir := flag.String("dir", "./repo", "Directory containing .zrp packages and index.json")
 	addr := flag.String("addr", ":8080", "Address to listen on")
+	tlsCert := flag.String("tls-cert", "", "PEM certificate chain; enables HTTPS when set with -tls-key")
+	tlsKey := flag.String("tls-key", "", "PEM private key for -tls-cert")
+	quiet := flag.Bool("quiet", false, "Do not log individual requests")
 	flag.Parse()
+
+	log.SetFlags(log.LstdFlags | log.LUTC)
 
 	repoDir, err := filepath.Abs(*dir)
 	if err != nil {
@@ -20,22 +63,121 @@ func main() {
 	if err := os.MkdirAll(repoDir, 0755); err != nil {
 		log.Fatalf("Failed to create repo directory: %v", err)
 	}
-
 	if _, err := os.Stat(filepath.Join(repoDir, "index.json")); err != nil {
 		log.Printf("Warning: no index.json in %s - run build-system/mkrepo.sh first", repoDir)
 	}
 
-	// Log every request so you can watch the VM pull packages in real time.
-	fs := http.FileServer(http.Dir(repoDir))
-	http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s %s", r.RemoteAddr, r.Method, r.URL.Path)
-		fs.ServeHTTP(w, r)
-	}))
+	if (*tlsCert == "") != (*tlsKey == "") {
+		log.Fatal("-tls-cert and -tls-key must be given together")
+	}
+	serveTLS := *tlsCert != ""
 
-	log.Printf("ZRPKG Server listening on %s", *addr)
+	server := &http.Server{
+		Addr:              *addr,
+		Handler:           repoHandler(repoDir, *quiet),
+		ReadTimeout:       readTimeout,
+		ReadHeaderTimeout: headerTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+		ErrorLog:          log.Default(),
+	}
+
+	scheme := "http"
+	if serveTLS {
+		scheme = "https"
+	}
+	log.Printf("ZRPKG Server listening on %s (%s)", *addr, scheme)
 	log.Printf("Serving packages from: %s", repoDir)
-	log.Printf("Under QEMU user networking the VM reaches this host at http://10.0.2.2%s", *addr)
-	if err := http.ListenAndServe(*addr, nil); err != nil {
+	log.Printf("Point an appliance at it with: zrpkg repo %s://<this-host>", scheme)
+	if !serveTLS {
+		log.Print("No TLS: signatures still protect what clients install, but " +
+			"anyone on the path can see what they install. Terminate TLS here " +
+			"with -tls-cert/-tls-key, or in a reverse proxy.")
+	}
+
+	// A rented server gets restarted, redeployed and reconfigured. Draining in
+	// flight downloads on the way out means a package fetch that was halfway
+	// through finishes rather than becoming a truncated file the client then
+	// reports as a signature failure.
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-shutdown
+		log.Print("Shutting down; waiting for in-flight requests...")
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil {
+			log.Printf("Shutdown: %v", err)
+		}
+	}()
+
+	if serveTLS {
+		err = server.ListenAndServeTLS(*tlsCert, *tlsKey)
+	} else {
+		err = server.ListenAndServe()
+	}
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+	log.Print("Stopped.")
+}
+
+// repoHandler serves the repository directory and nothing else.
+func repoHandler(repoDir string, quiet bool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !quiet {
+			log.Printf("%s %s %s", r.RemoteAddr, r.Method, r.URL.Path)
+		}
+
+		// A repository is read-only. Anything else is either a mistake or a
+		// probe, and both deserve the same answer.
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "read-only repository", http.StatusMethodNotAllowed)
+			return
+		}
+
+		name, ok := repoFile(r.URL.Path)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+
+		full := filepath.Join(repoDir, name)
+		info, err := os.Stat(full)
+		if err != nil || !info.Mode().IsRegular() {
+			http.NotFound(w, r)
+			return
+		}
+
+		// Manifests and the index change every time the repository is rebuilt;
+		// an archive at a given name is immutable in practice but not
+		// guaranteed, so nothing is cached for long.
+		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeFile(w, r, full)
+	})
+}
+
+// repoFile maps a request path to a filename inside the repository, or reports
+// that there is nothing legitimate to serve.
+//
+// The repository is flat: every valid request is for a single file at the root.
+// Collapsing to a bare filename and rejecting anything with a directory
+// component means traversal is not something to be defended against so much as
+// something with nowhere to go - "/../../etc/passwd" does not resolve to a
+// filename this function will return.
+func repoFile(urlPath string) (string, bool) {
+	// path.Clean resolves "." and ".." within the URL, and a leading slash
+	// makes any attempt to climb past the root resolve back to it.
+	cleaned := path.Clean("/" + urlPath)
+	name := strings.TrimPrefix(cleaned, "/")
+
+	if name == "" || strings.Contains(name, "/") {
+		return "", false
+	}
+	if !servedExtensions[strings.ToLower(path.Ext(name))] {
+		return "", false
+	}
+	return name, true
 }

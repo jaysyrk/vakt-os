@@ -1,19 +1,14 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Repository {
-    pub name: String,
-    pub url: String,
-    pub public_key: String,
-}
-
 /// A single entry in the repository's `index.json`, written by mkrepo.sh.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IndexEntry {
     pub name: String,
     pub version: String,
     pub description: String,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -21,23 +16,25 @@ pub struct RepoIndex {
     pub packages: Vec<IndexEntry>,
 }
 
-pub fn add_repo(name: &str, url: &str, _public_key: &str) -> Result<()> {
-    println!("Adding repository '{}': {}", name, url);
-    // Write to /etc/vakt/repos.d/
-    Ok(())
-}
-
 /// Fetches the repository index and lists what is available to install.
 pub async fn sync_repos() -> Result<()> {
-    let repo_url =
-        std::env::var("ZRPKG_REPO_URL").unwrap_or_else(|_| "http://10.0.2.2:8080".to_string());
-    println!("Syncing package database from {}...", repo_url);
+    let repository = crate::config::load();
+    println!(
+        "Syncing package database from {} (set in {})...",
+        repository.repo_url, repository.source
+    );
 
     let body = reqwest::Client::new()
-        .get(format!("{}/index.json", repo_url))
+        .get(format!("{}/index.json", repository.repo_url))
         .send()
         .await
-        .context("Failed to reach repository (is zrpkg-server running on the host?)")?
+        .with_context(|| {
+            format!(
+                "Failed to reach {}. Check the server is running and reachable; \
+                 change it with 'zrpkg repo <url>' or the panel's Packages page.",
+                repository.repo_url
+            )
+        })?
         .error_for_status()
         .context("Repository has no index.json")?
         .text()
@@ -53,6 +50,15 @@ pub async fn sync_repos() -> Result<()> {
     println!("\n{} package(s) available:\n", index.packages.len());
     for pkg in &index.packages {
         println!("  {:<18} {:<8} {}", pkg.name, pkg.version, pkg.description);
+        if !pkg.dependencies.is_empty() {
+            // Listed for information only; install pulls them in by itself.
+            println!(
+                "  {:<18} {:<8} requires {}",
+                "",
+                "",
+                pkg.dependencies.join(", ")
+            );
+        }
     }
     println!("\nInstall with: zrpkg install <name>");
 

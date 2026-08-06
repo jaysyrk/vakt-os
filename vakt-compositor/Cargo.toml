@@ -1,8 +1,9 @@
 [package]
 name = "vakt-compositor"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
+landlock = "0.4.7"
 libc = "0.2.189"
 memmap2 = "0.9.11"

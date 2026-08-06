@@ -1,49 +1,76 @@
-##*Making full kernal*
-## Layer 1: Hardware Abstraction & Bootstrapping (HAL)
-- [ ] **Multiboot2 Entry & Long Mode Setup**
-  - [ ] **[ZIG]** Write the assembly stub and aligned Multiboot2 header to transition the CPU from 32-bit to 64-bit Long Mode.
-  - [ ] Create a `linker.ld` script to map kernel code sections strictly at the 1MB physical boundary.
-- [ ] **CPU Tables & Interrupt Handling**
-  - [ ] **[ZIG]** Initialize the Global Descriptor Table (GDT) setting up privilege rings (Ring 0 for Kernel, Ring 3 for Userland).
-  - [ ] **[ZIG]** Configure the Interrupt Descriptor Table (IDT) to capture hardware ticks and keyboard presses.
+## Layer 1: Security Hardening and Isolation
+- [x] **Enforce Read-Only Root Filesystem**
+  - [x] Modify build.sh to mark the rootfs partition as read-only (ro).
+  - [x] Update vakt-init to mount a volatile tmpfs over /tmp and /run during bootstrap.
+- [x] **Privilege Drop Engine**
+  - [x] Implement user and group creation (vakt user) in the base image.
+  - [x] Update vakt-init to use setuid and setgid system calls to drop root privileges before launching vakt-panel.
+- [x] **Landlock LSM Sandboxing**
+  - [x] Integrate the landlock crate into vakt-net to restrict filesystem access exclusively to /persistent/etc/vakt-net.conf.
+  - [x] Apply Landlock restrictions to vakt-compositor, blocking all file access except for /dev/fb0.
 
-## Layer 2: Memory & Process Management
-- [ ] **Freestanding Memory Allocators**
-  - [ ] **[ZIG]** Parse Multiboot2 tags to build a Physical Page Frame Allocator (Buddy/Bitmap).
-  - [ ] **[RUST]** Implement page tables for virtual memory allocation and back a `#![no_std]` heap allocator (Slab).
-- [ ] **Preemptive Scheduler**
-  - [ ] **[RUST]** Implement a thread tracking system and a Task Scheduler inside the kernel core.
-  - [ ] **[ZIG]** Write the naked-assembly context-switch routines to save and restore CPU registers on timer ticks.
+## Layer 2: Package Manager Updates (zrpkg)
+- [x] **Enforce Cryptographic Trust**
+  - [x] Remove the fallback warning behavior for unverified packages.
+  - [x] Refactor zrpkg to explicitly abort installation if an Ed25519 signature validation fails.
+- [x] **Dependency Graph Resolution**
+  - [x] Expand the package .json schema to include a dependencies string array.
+  - [x] Implement a simple Directed Acyclic Graph (DAG) solver in Rust to fetch and install prerequisites sequentially.
+- [x] **Clean Uninstallation Engine**
+  - [x] Modify zrpkg install to generate a local manifest file tracking every unpacked file path.
+  - [x] Implement zrpkg remove <name> to parse the manifest and safely delete package files.
 
-## Layer 3: System Calls & Kernel IPC (The Bridge)
-- [ ] **MSR Syscall Interface**
-  - [ ] **[ZIG]** Program `IA32_LSTAR` to route the x86_64 `syscall` instruction cleanly from Ring 3 into the kernel.
-  - [ ] **[RUST]** Map raw registers into an internal system call array (`sys_write`, `sys_fork`, `sys_exec`, `sys_ipc`).
+## Layer 3: Init System and Process Supervisor (vakt-init)
+- [x] **Daemon Readiness Notifications**
+  - [x] Create a lightweight Unix domain socket mechanism inside /run/init.sock.
+  - [x] Modify background daemons to send a readiness signal (READY=1) so vakt-init knows exactly when to draw the TUI panel.
+- [x] **Graceful System Shutdown Sequence**
+  - [x] Trap SIGINT, SIGTERM, and SIGPWR in vakt-init's primary event loop.
+  - [x] Send SIGTERM to all supervised PIDs, await exit codes, sync disks, and safely unmount /persistent.
+- [x] **Supervisor Log Rotation**
+  - [x] Add a capacity clamp (e.g., 5MB limit) to the supervisor's stdout/stderr stream reader.
+  - [x] Truncate or rotate /run/<name>.log to prevent malformed or verbose daemons from exhausting volatile RAM.
 
-## Layer 4: Custom Init System & Supervisor
-- [ ] **Porting vakt-init to Vakt-Core**
-  - [ ] **[RUST]** Rewrite `vakt-init` using standard `#![no_std]` without any Linux headers or `glibc` dependencies.
-  - [ ] **[RUST]** Implement custom `syscall!` wrapper macros to substitute standard Linux kernel communication.
-- [ ] **Microkernel Service Supervisor**
-  - [ ] **[RUST]** Establish an IPC listener that spawns, monitors, and restarts your background userland daemons.
+## Layer 4: Infrastructure and Automation
+- [x] **Self-Contained Kernel Configuration**
+  - [x] Extract a minimal, monolithic kernel configuration (.config) stripping out unused drivers.
+  - [x] Save the configuration to build-system/kernel.config and update build.sh to compile it directly.
+- [x] **Automated CI/CD Pipeline**
+  - [x] Create .github/workflows/build.yml.
+  - [x] Configure a GitHub Actions workflow using an Arch Linux container (archlinux:latest) to build the project, run tests, and export vakt-os.iso as a release artifact.
 
-## Layer 5: Graphics & Storage Porting
-- [ ] **Vakt Framebuffer UI Engine**
-  - [ ] **[ZIG]** Expose a simple linear graphics framebuffer interface from the kernel.
-  - [ ] **[RUST]** Update `vakt-compositor` to draw UI pixels directly to this kernel-allocated video memory block.
-- [ ] **The Go Runtime User-Space Compatibility Port**
-  - [ ] **[GO]** Configure Go to compile targeting an entirely freestanding Unix environment (cross-compile via `TinyGo` or customized targets to completely strip out host OS expectations).
-  - [ ] **[GO]** Map Go's low-level system call wrappers to call your custom `sys_write` and `sys_ipc` assembly stubs instead of standard Linux system calls.
+---
 
-## Layer 6: High-Level Appliance Applications
-- [ ] **The Vakt Panel UI (vakt-panel)**
-  - [ ] **[GO]** Adapt your core appliance TUI management panel (`tview`) to stream inputs and outputs through your custom system call vectors.
-- [ ] **Security Auditing Engine (vakt-audit)**
-  - [ ] **[GO]** Write the file-integrity and metric logging programs in Go, utilizing Go's speed for structural parsing and networking.
+### Notes on what shipped
 
-## Layer 7: Cross-Language Build Infrastructure
-- [ ] **The Universal build.zig Orchestrator**
-  - [ ] **[ZIG]** Configure `zig build` to build the Zig hardware initialization.
-  - [ ] **[ZIG]** Trigger `cargo build --target x86_64-unknown-none` for the Kernel Core, `vakt-init`, and `vakt-compositor`.
-  - [ ] **[ZIG]** Invoke `go build` / `tinygo` to generate static userland assets, mapping them directly into an isolated RamFS block.
-  - [ ] Link them all together into a final, unified bootable image (`vakt_os.iso`).
+A few decisions worth recording, where the implementation is narrower or wider
+than the line above it. Details are in the [README](README.md).
+
+**Landlock on vakt-net.** Restricting the daemon to *only* its configuration
+file would stop it working: it drives `ip`, `wpa_supplicant` and `udhcpc`, and a
+Landlock ruleset is inherited by everything it spawns. What ships is the
+tightest ruleset that leaves it functional — read and execute on the image's
+program directories, read/write on `/run`, read on `/proc` and `/sys` — with the
+configuration file as the only reachable path under `/persistent`. The rest of
+the data disk is closed to the one daemon that talks to the network, which is
+the property the line was after.
+
+**Signals.** `SIGUSR1` and `SIGUSR2` are handled alongside the three named
+signals, because that is what busybox's `halt` and `poweroff` send to PID 1.
+Without them the shutdown sequence would exist but be unreachable from a shell.
+
+**Shutdown from the panel.** The panel now runs unprivileged and so cannot
+signal PID 1. `/run/init.sock` therefore accepts `SHUTDOWN=poweroff|reboot|halt`
+as well as readiness, and the socket is `root:vakt` mode 0660 so only init's own
+group can ask. Otherwise the graceful shutdown would be unreachable in normal
+operation.
+
+**Kernel configuration.** `build-system/kernel.config` is a seed fed to
+`make allnoconfig KCONFIG_ALLCONFIG=…` rather than a committed 5,000-line
+`.config`. It produces the same monolithic result, stays readable, and survives
+a kernel version bump. `build-system/mkkernel.sh` verifies afterwards that every
+required symbol actually survived, and fails the build listing any that did not.
+
+**Kernel modes.** `VAKT_KERNEL=host` remains supported. The monolithic kernel
+carries no Wi-Fi chipset drivers or firmware, so hardware it has no driver for
+still needs the host kernel's modules.

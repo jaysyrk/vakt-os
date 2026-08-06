@@ -1,0 +1,228 @@
+name: build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+# The whole project targets Arch: build.sh installs its dependencies with
+# pacman, and the image reuses the host's wpa_supplicant and CA bundle. Running
+# CI anywhere else would test a build nobody performs.
+env:
+  CARGO_TERM_COLOR: always
+
+# The build scripts use brace expansion and other bash features. In a container
+# job GitHub picks the first shell it finds, which is not guaranteed to be bash,
+# so say so rather than depending on what the image happens to ship.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Fast feedback. Everything here runs in seconds and catches the mistakes
+  # that are not worth a twenty-minute kernel compile to discover.
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install toolchains
+        run: pacman -Syu --noconfirm git rust go base-devel
+
+      - uses: actions/checkout@v4
+
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-
+
+      - name: Check formatting
+        run: |
+          set -eu
+          for crate in pkg-manager vakt-init vakt-net vakt-compositor; do
+            cargo fmt --manifest-path "$crate/Cargo.toml" --check
+          done
+          test -z "$(gofmt -l tools)" || {
+            echo "::error::gofmt found unformatted files:"; gofmt -l tools; exit 1;
+          }
+
+      - name: Rust tests
+        run: |
+          cargo test --manifest-path pkg-manager/Cargo.toml
+          cargo test --manifest-path vakt-init/Cargo.toml
+          cargo test --manifest-path vakt-net/Cargo.toml
+          cargo build --manifest-path vakt-compositor/Cargo.toml
+
+      - name: Go vet and tests
+        working-directory: tools
+        run: |
+          go vet ./...
+          go test ./cmd/...
+
+      - name: Shell scripts parse
+        run: bash -n build.sh build-system/*.sh deploy/*.sh
+
+      # The package pipeline end to end, against a repository served over HTTP
+      # exactly as the VM would see it: pack and sign three packages in a
+      # dependency chain, install the top one, and confirm the graph was walked
+      # in the right order and that removal puts the tree back.
+      - name: Package manager integration
+        run: |
+          set -eu
+          cargo build --release --manifest-path pkg-manager/Cargo.toml
+          go build -C tools -buildvcs=false -o "$PWD/tools/bin/zrpkg-server" ./cmd/zrpkg-server/
+          ZRPKG="$PWD/pkg-manager/target/release/zrpkg"
+          WORK=$(mktemp -d)
+          mkdir -p "$WORK"/{repo,stage,root}
+
+          KEY=$(openssl rand -hex 32)
+          for pkg in base mid tool; do
+            mkdir -p "$WORK/stage/$pkg/usr/bin"
+            printf '#!/bin/sh\necho %s\n' "$pkg" > "$WORK/stage/$pkg/usr/bin/$pkg"
+            chmod +x "$WORK/stage/$pkg/usr/bin/$pkg"
+          done
+
+          PUB=$("$ZRPKG" pack "$WORK/stage/base" "$KEY" -o "$WORK/repo" \
+                  --version 1.0.0 --description base | awk '/^Public key:/{print $3}')
+          "$ZRPKG" pack "$WORK/stage/mid"  "$KEY" -o "$WORK/repo" --version 1.0.0 \
+                  --description mid  --depends base > /dev/null
+          "$ZRPKG" pack "$WORK/stage/tool" "$KEY" -o "$WORK/repo" --version 1.0.0 \
+                  --description tool --depends mid  > /dev/null
+
+          cat > "$WORK/repo/index.json" <<'JSON'
+          {"packages":[
+            {"name":"base","version":"1.0.0","description":"base","dependencies":[]},
+            {"name":"mid","version":"1.0.0","description":"mid","dependencies":["base"]},
+            {"name":"tool","version":"1.0.0","description":"tool","dependencies":["mid"]}
+          ]}
+          JSON
+
+          # Served by the project's own repository server, so the test
+          # exercises the pair that actually ship together. Its output goes to
+          # a file rather than the step's log: a background process holding the
+          # step's stdout open keeps the step running after the script is done.
+          ./tools/bin/zrpkg-server -dir "$WORK/repo" -addr 127.0.0.1:8099 \
+            > "$WORK/server.log" 2>&1 &
+          SERVER=$!
+          trap 'kill "$SERVER" 2>/dev/null || true' EXIT
+
+          for _ in $(seq 20); do
+            curl -fsS http://127.0.0.1:8099/index.json >/dev/null 2>&1 && break
+            sleep 0.5
+          done
+
+          export ZRPKG_REPO_URL=http://127.0.0.1:8099
+          export ZRPKG_PUBKEY="$PUB"
+          export ZRPKG_ROOT="$WORK/root"
+
+          "$ZRPKG" update
+          "$ZRPKG" install tool | tee "$WORK/install.log"
+
+          for pkg in base mid tool; do
+            test -x "$WORK/root/usr/bin/$pkg" || { echo "$pkg was not installed"; exit 1; }
+          done
+          grep -q '\[1/3\] base' "$WORK/install.log" || {
+            echo "dependencies were not installed first"; cat "$WORK/install.log"; exit 1;
+          }
+
+          # A package still needed by another must not come out.
+          if "$ZRPKG" remove base 2>/dev/null; then
+            echo "removing a depended-on package should have failed"; exit 1
+          fi
+
+          # A tampered archive must not go in, even though its manifest and
+          # signature are untouched and the repository still serves both.
+          head -c 4096 /dev/urandom > "$WORK/repo/tool.zrp"
+          rm -rf "$WORK/root"; mkdir -p "$WORK/root"
+          if "$ZRPKG" install tool >/dev/null 2>&1; then
+            echo "a tampered archive was installed"; exit 1
+          fi
+
+          # And with no trust anchor at all, nothing installs.
+          unset ZRPKG_PUBKEY
+          if "$ZRPKG" install base >/dev/null 2>&1; then
+            echo "a package was installed with no trusted key"; exit 1
+          fi
+          echo "package pipeline verified"
+
+  # The real deliverable. Slow, because it compiles a kernel; cached, because
+  # the kernel source and object tree do not change between runs.
+  iso:
+    name: iso
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    needs: test
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm git rust go base-devel sudo \
+            grub xorriso cpio gzip mtools wget curl wpa_supplicant kmod \
+            bc flex bison openssl perl xz e2fsprogs
+
+      - uses: actions/checkout@v4
+
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-
+
+      # Keyed on the kernel config too: changing which symbols are requested
+      # has to invalidate the object tree, or the ISO would ship a kernel built
+      # from the previous configuration.
+      - name: Cache kernel tree
+        uses: actions/cache@v4
+        with:
+          path: /tmp/vakt-kernel
+          key: kernel-${{ hashFiles('build-system/kernel.config', 'build-system/mkkernel.sh') }}
+          restore-keys: kernel-
+
+      - name: Build the ISO
+        env:
+          VAKT_KERNEL: custom
+        run: |
+          # build.sh drops to $SUDO_USER for the compile steps; in a container
+          # everything already runs as root, so point it at root.
+          SUDO_USER=root ./build.sh
+
+      - name: Summarise the image
+        run: |
+          {
+            echo "### Vakt OS image"
+            echo
+            echo '| Artifact | Size |'
+            echo '| --- | --- |'
+            echo "| vakt-os.iso | $(du -h vakt-os.iso | cut -f1) |"
+            echo "| initramfs | $(du -h /tmp/vakt-initramfs.cpio.gz | cut -f1) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vakt-os-iso
+          path: vakt-os.iso
+          if-no-files-found: error
+          retention-days: 14
+
+      # A tag is a release. The ISO is well over the 100MB the repository will
+      # hold, which is why it is a release asset and not a committed file.
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: vakt-os.iso
+          generate_release_notes: true

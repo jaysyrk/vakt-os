@@ -36,12 +36,14 @@ fi
 PRIV_KEY=$(cat "$KEY_FILE")
 
 # --- Package definitions -----------------------------------------------------
-# Format: <package name>|<path to binary>|<version>|<description>
+# Format: <package name>|<path to binary>|<version>|<description>|<comma-separated dependencies>
+# The dependency field may be empty. zrpkg resolves the graph itself, so listing
+# a package's direct dependencies here is enough - transitive ones are found.
 PACKAGES=(
-    "vakt-audit|$PROJECT_ROOT/tools/bin/vakt-audit|1.0.0|CIS-style security compliance auditor."
-    "vakt-ids|$PROJECT_ROOT/tools/bin/vakt-ids|1.0.0|Filesystem integrity intrusion detection daemon."
-    "vakt-compositor|$PROJECT_ROOT/vakt-compositor/target/release/vakt-compositor|0.1.0|Raw framebuffer graphical compositor."
-    "vakt-ai|$PROJECT_ROOT/tools/bin/vakt-ai|0.1.0|Vakt OS AI assistant."
+    "vakt-audit|$PROJECT_ROOT/tools/bin/vakt-audit|1.0.0|CIS-style security compliance auditor.|"
+    "vakt-ids|$PROJECT_ROOT/tools/bin/vakt-ids|1.0.0|Filesystem integrity intrusion detection daemon.|"
+    "vakt-compositor|$PROJECT_ROOT/vakt-compositor/target/release/vakt-compositor|0.1.0|Raw framebuffer graphical compositor.|"
+    "vakt-ai|$PROJECT_ROOT/tools/bin/vakt-ai|0.1.0|Vakt OS AI assistant.|"
 )
 
 rm -rf "$STAGE"
@@ -52,7 +54,7 @@ PUB_KEY=""
 INDEX_ENTRIES=()
 
 for entry in "${PACKAGES[@]}"; do
-    IFS='|' read -r name binary version description <<< "$entry"
+    IFS='|' read -r name binary version description depends <<< "$entry"
 
     if [ ! -f "$binary" ]; then
         echo "[-] Skipping $name (not built: $binary)"
@@ -65,10 +67,15 @@ for entry in "${PACKAGES[@]}"; do
     cp "$binary" "$STAGE/$name/usr/bin/$name"
     chmod +x "$STAGE/$name/usr/bin/$name"
 
-    OUTPUT=$("$ZRPKG" pack "$STAGE/$name" "$PRIV_KEY" \
-        --out-dir "$REPO_DIR" \
-        --version "$version" \
+    PACK_ARGS=(pack "$STAGE/$name" "$PRIV_KEY"
+        --out-dir "$REPO_DIR"
+        --version "$version"
         --description "$description")
+    if [ -n "$depends" ]; then
+        PACK_ARGS+=(--depends "$depends")
+    fi
+
+    OUTPUT=$("$ZRPKG" "${PACK_ARGS[@]}")
     echo "$OUTPUT" | sed 's/^/    /'
 
     # Every package is signed with the same key, so capture it once.
@@ -76,7 +83,16 @@ for entry in "${PACKAGES[@]}"; do
         PUB_KEY=$(echo "$OUTPUT" | awk '/^Public key:/ {print $3}')
     fi
 
-    INDEX_ENTRIES+=("{\"name\":\"$name\",\"version\":\"$version\",\"description\":\"$description\"}")
+    # Render the dependency list as a JSON array: "a,b" -> ["a","b"], "" -> [].
+    if [ -n "$depends" ]; then
+        DEPS_JSON=$(printf '%s' "$depends" | awk -F, '{
+            for (i = 1; i <= NF; i++) printf "%s\"%s\"", (i > 1 ? "," : ""), $i
+        }')
+    else
+        DEPS_JSON=""
+    fi
+
+    INDEX_ENTRIES+=("{\"name\":\"$name\",\"version\":\"$version\",\"description\":\"$description\",\"dependencies\":[$DEPS_JSON]}")
 done
 
 if [ ${#INDEX_ENTRIES[@]} -eq 0 ]; then

@@ -57,16 +57,16 @@ func checkShadowPermissions() AuditResult {
 	if err != nil {
 		return AuditResult{"/etc/shadow Permissions", false, "Could not stat /etc/shadow"}
 	}
-	
+
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return AuditResult{"/etc/shadow Permissions", false, "Failed to get stat_t"}
 	}
 
 	// Should be owned by root (uid 0) and group root/shadow
-	passed := stat.Uid == 0 && (info.Mode().Perm() & 0077) == 0
+	passed := stat.Uid == 0 && (info.Mode().Perm()&0077) == 0
 	desc := "Verify /etc/shadow is owned by root and heavily restricted."
-	
+
 	return AuditResult{"/etc/shadow Permissions", passed, desc}
 }
 

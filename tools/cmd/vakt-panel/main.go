@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -80,13 +81,44 @@ func main() {
 		runInto(pkgView, "zrpkg", "install", name)
 	})
 
+	// The repository is deployment configuration, not part of the build: an
+	// appliance in the field talks to a server somewhere, and the root
+	// filesystem is read-only, so this is the only way to change it without a
+	// shell. It is saved next to the network configuration on the data disk.
+	repoInput := tview.NewInputField().
+		SetLabel(" Repository: ").
+		SetText(readRepoURL()).
+		SetFieldWidth(40)
+
+	saveRepoBtn := tview.NewButton("Save Repository").SetSelectedFunc(func() {
+		pkgView.Clear()
+		url, path, err := writeRepoURL(repoInput.GetText())
+		if err != nil {
+			fmt.Fprintf(pkgView, "[red]%v[-]\n", err)
+			return
+		}
+		repoInput.SetText(url)
+		fmt.Fprintf(pkgView, "[green]Repository set to %s[-]\n", url)
+		fmt.Fprintf(pkgView, "Saved to %s\n\n", path)
+		if strings.HasPrefix(url, "http://") {
+			fmt.Fprint(pkgView, "[yellow]This is plain HTTP. Signatures still protect what\n"+
+				"you install, but anyone on the path can see what you install.[-]\n\n")
+		}
+		fmt.Fprint(pkgView, "Choose List Available to see what it offers.\n")
+	})
+
 	pkgControls := tview.NewFlex().
 		AddItem(pkgInput, 36, 0, true).
 		AddItem(installPkgBtn, 0, 1, false).
 		AddItem(listPkgBtn, 0, 1, false)
 
+	repoControls := tview.NewFlex().
+		AddItem(repoInput, 54, 0, false).
+		AddItem(saveRepoBtn, 0, 1, false)
+
 	pkgFlex := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(pkgControls, 3, 1, true).
+		AddItem(repoControls, 1, 0, false).
 		AddItem(pkgView, 0, 4, false)
 
 	pages.AddPage("Packages", pkgFlex, true, false)
@@ -194,6 +226,43 @@ func main() {
 
 	pages.AddPage("IDS", idsFlex, true, false)
 
+	// --- 8. Power ---
+	// The panel runs unprivileged and cannot signal PID 1, so shutting down
+	// goes through vakt-init's control socket. Doing it any other way would
+	// cut power with the data disk still mounted.
+	powerResult := tview.NewTextView().SetDynamicColors(true)
+	powerResult.SetBorder(true).SetTitle(" Power ")
+
+	requestPower := func(verb, describe string) {
+		powerResult.Clear()
+		if err := requestShutdown(verb); err != nil {
+			fmt.Fprintf(powerResult, "[red]%s failed: %v[-]\n\n", describe, err)
+			fmt.Fprint(powerResult, "From a root shell, busybox 'poweroff' and 'reboot'\n"+
+				"signal vakt-init directly.\n")
+			return
+		}
+		fmt.Fprintf(powerResult, "[yellow]%s requested.[-]\n\n", describe)
+		fmt.Fprint(powerResult, "vakt-init is stopping services, flushing disks and\n"+
+			"unmounting /persistent before the system goes down.\n")
+	}
+
+	powerOffBtn := tview.NewButton("Power Off").SetSelectedFunc(func() {
+		requestPower("poweroff", "Power off")
+	})
+	rebootBtn := tview.NewButton("Reboot").SetSelectedFunc(func() {
+		requestPower("reboot", "Reboot")
+	})
+
+	powerControls := tview.NewFlex().
+		AddItem(powerOffBtn, 0, 1, true).
+		AddItem(rebootBtn, 0, 1, false)
+
+	powerFlex := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(powerControls, 3, 1, true).
+		AddItem(powerResult, 0, 4, false)
+
+	pages.AddPage("Power", powerFlex, true, false)
+
 	// --- Menu List ---
 	list := tview.NewList().
 		AddItem("Dashboard", "Overview of system status", 'd', func() {
@@ -229,7 +298,11 @@ func main() {
 		AddItem("Graphical Mode", "Hand the console to vakt-compositor", 'g', func() {
 			launchCompositor(app, dashboardText, pages)
 		}).
-		AddItem("Exit to Shell", "Drop to raw root prompt", 'q', func() {
+		AddItem("Power", "Shut down or restart the appliance", 'o', func() {
+			pages.SwitchToPage("Power")
+			app.SetFocus(powerOffBtn)
+		}).
+		AddItem("Exit to Shell", "Drop to a shell prompt", 'q', func() {
 			app.Stop()
 		})
 	list.SetBorder(true).SetTitle(" Main Menu ")

@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about = "The Vakt OS package manager.", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -9,10 +9,29 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    Install { package: String },
-    Remove { package: String },
+    /// Fetch, verify, and install packages and everything they depend on.
+    Install {
+        #[arg(required = true)]
+        packages: Vec<String>,
+    },
+    /// Delete an installed package's files, using the manifest install wrote.
+    Remove {
+        package: String,
+        /// Remove it even though other installed packages still need it.
+        #[arg(long)]
+        force: bool,
+    },
+    /// List what the repository offers.
     Update,
+    /// Show the repository this system fetches from, or point it at another.
+    Repo {
+        /// New repository URL, e.g. https://packages.example.com. Omit to show
+        /// the current setting and where it came from.
+        url: Option<String>,
+    },
+    /// Download a package and check its signature without installing it.
     Verify { package: String },
+    /// Build and sign a .zrp archive from a directory.
     Pack {
         source_dir: String,
         private_key_hex: String,
@@ -23,5 +42,8 @@ pub enum Commands {
         version: String,
         #[arg(long, default_value = "A Vakt OS package.")]
         description: String,
+        /// Packages this one needs, as a comma-separated list.
+        #[arg(long = "depends", value_delimiter = ',')]
+        dependencies: Vec<String>,
     },
 }

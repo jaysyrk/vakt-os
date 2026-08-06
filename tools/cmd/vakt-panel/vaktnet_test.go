@@ -41,13 +41,17 @@ func TestNetStatusReportHandlesMissingFile(t *testing.T) {
 }
 
 func TestServicesReportParsesSupervisorOutput(t *testing.T) {
-	// Tab-separated, matching Supervisor::write_status in vakt-init.
+	// Tab-separated, matching Supervisor::write_status in vakt-init:
+	// name, state, pid, restarts, readiness, detail.
 	path := writeTemp(t, "services.status",
-		"vakt-net\trunning\t412\t0\tWi-Fi and DHCP negotiation\n"+
-			"vakt-ids\tfailed\t\t6\tFilesystem integrity monitor\n")
+		"vakt-net\trunning\t412\t0\tready\t10.0.2.15 on eth0\n"+
+			"vakt-ids\tfailed\t\t6\twaiting\tFilesystem integrity monitor\n")
 
 	got := servicesReportFrom(path)
-	for _, want := range []string{"vakt-net", "running", "412", "vakt-ids", "failed"} {
+	for _, want := range []string{
+		"vakt-net", "running", "412", "ready", "10.0.2.15 on eth0",
+		"vakt-ids", "failed", "waiting",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report missing %q:\n%s", want, got)
 		}
@@ -55,6 +59,18 @@ func TestServicesReportParsesSupervisorOutput(t *testing.T) {
 	// A service with no PID should render a placeholder, not an empty column.
 	if !strings.Contains(got, "-") {
 		t.Errorf("expected a placeholder for the missing pid:\n%s", got)
+	}
+}
+
+// A status file written by an older supervisor has five fields, not six. It
+// should still render rather than being dropped or panicking on the index.
+func TestServicesReportToleratesAShorterOlderLine(t *testing.T) {
+	path := writeTemp(t, "services.status",
+		"vakt-net\trunning\t412\t0\tWi-Fi and DHCP negotiation\n")
+
+	got := servicesReportFrom(path)
+	if !strings.Contains(got, "vakt-net") || !strings.Contains(got, "running") {
+		t.Errorf("short line was not rendered:\n%s", got)
 	}
 }
 

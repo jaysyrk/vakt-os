@@ -1,8 +1,8 @@
 use crate::manifest::PackageManifest;
 use anyhow::{Context, Result};
 use ed25519_dalek::{Signer, SigningKey};
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -17,6 +17,7 @@ pub fn pack_directory(
     out_dir: Option<&str>,
     version: &str,
     description: &str,
+    dependencies: &[String],
 ) -> Result<()> {
     let source_path = Path::new(source_dir);
     if !source_path.is_dir() {
@@ -70,7 +71,7 @@ pub fn pack_directory(
         name: pkg_name,
         version: version.to_string(),
         description: description.to_string(),
-        dependencies: Vec::new(),
+        dependencies: dependencies.to_vec(),
         signature: sig_hex.clone(),
     };
     std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)
@@ -78,6 +79,9 @@ pub fn pack_directory(
 
     let public_key_hex = hex::encode(signing_key.verifying_key().to_bytes());
 
+    if !dependencies.is_empty() {
+        println!("Depends:    {}", dependencies.join(", "));
+    }
     println!("Signature:  {}", sig_hex);
     println!("Public key: {}", public_key_hex);
     println!("Manifest:   {}", manifest_path.display());

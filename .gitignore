@@ -10,8 +10,12 @@ tools/vakt-audit
 # Generated package repository (rebuild with build-system/mkrepo.sh)
 tools/repo/
 
+# Compiled kernel image (rebuild with build-system/mkkernel.sh)
+build-system/out/
+
 # --- Images ------------------------------------------------------------------
-# The ISO is ~720MB, well over GitHub's 100MB per-file limit.
+# The ISO is well over GitHub's 100MB per-file limit; CI publishes it as a
+# release asset instead.
 *.iso
 # Persistent data disk: holds Wi-Fi credentials and installed packages.
 *.img
