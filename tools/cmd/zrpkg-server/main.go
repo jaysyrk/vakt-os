@@ -7,8 +7,8 @@
 // process with no timeouts is a slow-loris away from being unavailable.
 //
 // So this serves a deliberately small surface. Read-only methods, a flat
-// namespace, two file extensions, no listings, bounded timeouts, and optional
-// TLS for when there is no reverse proxy in front of it.
+// namespace, two file extensions, no listings, bounded timeouts, per-IP rate
+// limiting, and optional TLS for when there is no reverse proxy in front of it.
 //
 // Note what it does not do: authentication. Packages are signed and clients
 // verify them against a trust anchor, so the repository is public data. Keep
@@ -52,6 +52,8 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "PEM certificate chain; enables HTTPS when set with -tls-key")
 	tlsKey := flag.String("tls-key", "", "PEM private key for -tls-cert")
 	quiet := flag.Bool("quiet", false, "Do not log individual requests")
+	rateLimit := flag.Float64("rate-limit", 5, "Max sustained requests per second, per client IP (0 disables)")
+	rateBurst := flag.Float64("rate-burst", 20, "Requests a client IP may burst before the rate limit applies")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.LUTC)
@@ -72,9 +74,14 @@ func main() {
 	}
 	serveTLS := *tlsCert != ""
 
+	handler := repoHandler(repoDir, *quiet)
+	if *rateLimit > 0 {
+		handler = newRateLimiter(*rateLimit, *rateBurst).limit(handler)
+	}
+
 	server := &http.Server{
 		Addr:              *addr,
-		Handler:           repoHandler(repoDir, *quiet),
+		Handler:           handler,
 		ReadTimeout:       readTimeout,
 		ReadHeaderTimeout: headerTimeout,
 		WriteTimeout:      writeTimeout,
@@ -93,6 +100,11 @@ func main() {
 		log.Print("No TLS: signatures still protect what clients install, but " +
 			"anyone on the path can see what they install. Terminate TLS here " +
 			"with -tls-cert/-tls-key, or in a reverse proxy.")
+	}
+	if *rateLimit > 0 {
+		log.Printf("Rate limit: %.0f req/s per IP, burst %.0f", *rateLimit, *rateBurst)
+	} else {
+		log.Print("Rate limit: disabled (-rate-limit 0)")
 	}
 
 	// A rented server gets restarted, redeployed and reconfigured. Draining in

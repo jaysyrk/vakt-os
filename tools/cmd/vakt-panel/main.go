@@ -253,6 +253,84 @@ func main() {
 
 	pages.AddPage("Power", powerFlex, true, false)
 
+	securityResult := tview.NewTextView().SetDynamicColors(true)
+	securityResult.SetBorder(true).SetTitle(" Result ")
+	securityStatus := tview.NewTextView().SetDynamicColors(true)
+	securityForm := tview.NewForm()
+
+	// Rebuilt after every change rather than updated in place: the form has
+	// a "Current PIN" field and a "Remove PIN" button only when a PIN already
+	// exists, and which fields exist is exactly what changes.
+	var rebuildSecurityForm func()
+	rebuildSecurityForm = func() {
+		securityForm.Clear(true)
+		protected := hasPIN()
+		if protected {
+			securityStatus.SetText("[green]This panel is PIN protected.[-]")
+			securityForm.AddPasswordField("Current PIN", "", 20, '*', nil)
+		} else {
+			securityStatus.SetText("[red]No PIN is set. Anyone with console access has full control.[-]")
+		}
+		securityForm.AddPasswordField("New PIN", "", 20, '*', nil)
+		securityForm.AddPasswordField("Confirm New PIN", "", 20, '*', nil)
+
+		field := func(label string) string {
+			item := securityForm.GetFormItemByLabel(label)
+			if item == nil {
+				return ""
+			}
+			return item.(*tview.InputField).GetText()
+		}
+
+		securityForm.AddButton("Set / Change PIN", func() {
+			securityResult.Clear()
+			if protected && !verifyPIN(field("Current PIN")) {
+				fmt.Fprint(securityResult, "[red]Current PIN is incorrect.[-]\n")
+				return
+			}
+			newPIN := field("New PIN")
+			if newPIN == "" {
+				fmt.Fprint(securityResult, "[red]New PIN cannot be empty.[-]\n")
+				return
+			}
+			if newPIN != field("Confirm New PIN") {
+				fmt.Fprint(securityResult, "[red]New PIN and confirmation do not match.[-]\n")
+				return
+			}
+			if err := setPIN(newPIN); err != nil {
+				fmt.Fprintf(securityResult, "[red]Could not save PIN: %v[-]\n", err)
+				return
+			}
+			fmt.Fprint(securityResult, "[green]PIN saved.[-]\n")
+			rebuildSecurityForm()
+		})
+
+		if protected {
+			securityForm.AddButton("Remove PIN", func() {
+				securityResult.Clear()
+				if !verifyPIN(field("Current PIN")) {
+					fmt.Fprint(securityResult, "[red]Current PIN is incorrect.[-]\n")
+					return
+				}
+				if err := removePIN(); err != nil {
+					fmt.Fprintf(securityResult, "[red]Could not remove PIN: %v[-]\n", err)
+					return
+				}
+				fmt.Fprint(securityResult, "[yellow]PIN removed. This panel is no longer protected.[-]\n")
+				rebuildSecurityForm()
+			})
+		}
+	}
+	rebuildSecurityForm()
+	securityForm.SetBorder(true).SetTitle(" Panel Lock ")
+
+	securityFlex := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(securityStatus, 1, 0, false).
+		AddItem(securityForm, 9, 1, true).
+		AddItem(securityResult, 0, 1, false)
+
+	pages.AddPage("Security", securityFlex, true, false)
+
 	list := tview.NewList().
 		AddItem("Dashboard", "Overview of system status", 'd', func() {
 			pages.SwitchToPage("Dashboard")
@@ -287,6 +365,10 @@ func main() {
 		AddItem("Graphical Mode", "Hand the console to vakt-compositor", 'g', func() {
 			launchCompositor(app, dashboardText, pages)
 		}).
+		AddItem("Panel Lock", "Set, change, or remove the console PIN", 'l', func() {
+			pages.SwitchToPage("Security")
+			app.SetFocus(securityForm)
+		}).
 		AddItem("Power", "Shut down or restart the appliance", 'o', func() {
 			pages.SwitchToPage("Power")
 			app.SetFocus(powerOffBtn)
@@ -316,7 +398,8 @@ func main() {
 		AddItem(title, 1, 1, false).
 		AddItem(flex, 0, 1, true)
 
-	if err := app.SetRoot(mainLayout, true).EnableMouse(true).Run(); err != nil {
+	app.EnableMouse(true)
+	if err := app.SetRoot(authGateRoot(app, mainLayout, list), true).Run(); err != nil {
 		panic(err)
 	}
 }

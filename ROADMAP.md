@@ -39,6 +39,34 @@
   - [x] Create .github/workflows/build.yml.
   - [x] Configure a GitHub Actions workflow using an Arch Linux container (archlinux:latest) to build the project, run tests, and export vakt-os.iso as a release artifact.
 
+## Layer 5: Production Readiness
+- [x] **Panel Authentication**
+  - [x] Add a salted, hashed PIN gate vakt-panel requires before showing the main menu.
+  - [x] First-boot setup screen (with an explicit, explained skip), and a Panel Lock page to change or remove the PIN afterward.
+- [x] **Boot-Time Kernel Hardening**
+  - [x] Apply a fixed set of hardening sysctls (ptrace_scope, kptr_restrict, dmesg_restrict, rp_filter, and related network sysctls) in vakt-init, best-effort so a kernel built without a given knob does not fail to boot.
+- [x] **Real vakt-audit Checks**
+  - [x] Parse /etc/passwd for UID 0 exclusivity instead of only checking that a lookup succeeds.
+  - [x] Replace the mocked sysctl check with real /proc/sys reads against the same list vakt-init hardens.
+- [x] **zrpkg-server Rate Limiting**
+  - [x] Per-IP token bucket (-rate-limit/-rate-burst), rejecting with 429 before any file is touched.
+- [ ] **OS Image Update Mechanism**
+  - [ ] A way to update the base image (kernel, init, core tools) in the field, not just zrpkg packages.
+  - [ ] A/B partitions or another rollback path so a bad update cannot brick a deployed appliance.
+- [ ] **Encrypted Wi-Fi Credentials at Rest**
+  - [ ] Something stronger than root-only file permissions for the PSK in /persistent/etc/vakt-net.conf.
+- [ ] **Fleet Observability**
+  - [ ] Ship logs, metrics or alerts off the device - useful for anyone running more than one appliance.
+- [ ] **Disaster Recovery for /persistent**
+  - [ ] A backup or snapshot path for the data disk; right now corruption there is simply unrecoverable.
+- [ ] **Security Audit**
+  - [ ] Fuzzing and a focused review of every `unsafe` Rust block (privilege drop, mmap, ioctl).
+  - [ ] Independent/third-party review before this runs anything that matters.
+- [ ] **Operator Documentation**
+  - [ ] An incident-response runbook, a key-rotation procedure, and steps for recovering a bricked appliance.
+- [ ] **Real Hardware Validation**
+  - [ ] CI only proves the ISO builds and boots in a container/QEMU; physical NICs, Wi-Fi chipsets, storage controllers and Secure Boot still need testing on real machines.
+
 ---
 
 ### Notes on what shipped
@@ -74,3 +102,24 @@ required symbol actually survived, and fails the build listing any that did not.
 **Kernel modes.** `VAKT_KERNEL=host` remains supported. The monolithic kernel
 carries no Wi-Fi chipset drivers or firmware, so hardware it has no driver for
 still needs the host kernel's modules.
+
+**Panel PIN.** There is no server-side identity here to authenticate against -
+it is one hashed value on the data disk, checked against what the person at
+the console typed. That is deliberately weak compared to a real login system;
+what it defends against is exactly one thing, someone with physical access
+opening the panel, and the existing `vakt.rootshell` recovery path is the
+answer to a forgotten PIN, not a new hole - it already required console access
+to use.
+
+**Sysctl hardening and the audit check.** `vakt-init/src/sysctl.rs` and
+`tools/cmd/vakt-audit/main.go` carry the same list of paths and values by
+hand, not by import - `vakt-audit` has to read the real state of the system to
+mean anything, and importing the setter's list would make it check that the
+setter ran, not that hardening exists. This is the same independence argument
+`vakt-verify` makes for signatures, applied to a smaller thing.
+
+**Rate limiting is per-process, not shared.** The token buckets in
+`zrpkg-server` live in memory. Running more than one instance behind a load
+balancer would give each instance its own budget per IP rather than one
+shared budget - fine for the single-server deployment this project documents,
+worth knowing before scaling past it.

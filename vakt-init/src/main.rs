@@ -11,6 +11,7 @@ mod notify;
 mod privilege;
 mod services;
 mod shutdown;
+mod sysctl;
 
 use notify::Listener;
 use privilege::Identity;
@@ -53,6 +54,12 @@ fn main() {
 
     println!("[Vakt-Init] Mounting virtual filesystems...");
     mount::virtual_filesystems();
+
+    let (applied, total) = sysctl::harden();
+    println!(
+        "[Vakt-Init] Applied {}/{} kernel hardening sysctls.",
+        applied, total
+    );
 
     println!("[Vakt-Init] Isolating volatile RAM filesystems...");
     mount::volatile_filesystems();

@@ -135,6 +135,9 @@ it to a VM on your laptop, so `zrpkg-server` is deliberately narrow:
   repository directory is not reachable.
 - No directory listings — the repository does not enumerate itself.
 - Bounded read, write, header and idle timeouts.
+- Per-IP rate limiting (`-rate-limit`, default 5 req/s, burst `-rate-burst`,
+  default 20). A client past its budget gets `429` before any file is touched.
+  Set `-rate-limit 0` to disable.
 - `SIGTERM` drains in-flight downloads before exiting.
 
 ## Rotating the signing key
