@@ -51,7 +51,6 @@ pub async fn sync_repos() -> Result<()> {
     for pkg in &index.packages {
         println!("  {:<18} {:<8} {}", pkg.name, pkg.version, pkg.description);
         if !pkg.dependencies.is_empty() {
-            // Listed for information only; install pulls them in by itself.
             println!(
                 "  {:<18} {:<8} requires {}",
                 "",

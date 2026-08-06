@@ -98,7 +98,6 @@ fn main() {
                     detail: "Link is up.".to_string(),
                 });
                 backoff = BACKOFF_START;
-                // Hold here until the link drops or the config is edited.
                 monitor(&cfg, stamp);
             }
             Err(e) => {

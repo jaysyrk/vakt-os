@@ -433,7 +433,6 @@ impl Supervisor {
             };
 
             match child.try_wait() {
-                // Still running.
                 Ok(None) => {}
                 Ok(Some(exit)) => {
                     let pid = Some(child.id());
