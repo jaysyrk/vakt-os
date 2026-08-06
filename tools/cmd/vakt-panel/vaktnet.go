@@ -69,7 +69,6 @@ func readNetConfig() (ssid, iface string) {
 	return ssid, iface
 }
 
-// readKeyValueFile parses the key=value status files written by vakt-net.
 func readKeyValueFile(path string) map[string]string {
 	values := map[string]string{}
 	data, err := os.ReadFile(path)
@@ -84,7 +83,6 @@ func readKeyValueFile(path string) map[string]string {
 	return values
 }
 
-// netStatusReport renders /run/vakt-net.status for display.
 func netStatusReport() string { return netStatusReportFrom(netStatusFile) }
 
 func netStatusReportFrom(path string) string {
@@ -117,7 +115,6 @@ func netStatusReportFrom(path string) string {
 	return b.String()
 }
 
-// servicesReport renders the supervisor's summary from vakt-init.
 func servicesReport() string { return servicesReportFrom(servicesStatus) }
 
 func servicesReportFrom(path string) string {
@@ -170,7 +167,6 @@ func servicesReportFrom(path string) string {
 	return b.String()
 }
 
-// idsReport shows the most recent intrusion detection findings.
 func idsReport(limit int) string { return idsReportFrom(idsAlerts, limit) }
 
 func idsReportFrom(path string, limit int) string {

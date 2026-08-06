@@ -14,7 +14,6 @@ func main() {
 	app := tview.NewApplication()
 	pages := tview.NewPages()
 
-	// newOutputView builds the scrollable output pane used by most pages.
 	newOutputView := func() *tview.TextView {
 		view := tview.NewTextView().
 			SetDynamicColors(true).
@@ -26,7 +25,6 @@ func main() {
 		return view
 	}
 
-	// runInto executes a command and streams its combined output into view.
 	runInto := func(view *tview.TextView, name string, args ...string) {
 		view.Clear()
 		fmt.Fprintf(view, "[yellow]Running %s...[-]\n", name)
@@ -39,7 +37,6 @@ func main() {
 		}()
 	}
 
-	// --- 1. Dashboard ---
 	dashboardText := tview.NewTextView().
 		SetDynamicColors(true).
 		SetText("[green]System Status: Online[-]\n\n" +
@@ -50,7 +47,6 @@ func main() {
 	dashboardText.SetBorder(true).SetTitle(" Dashboard ")
 	pages.AddPage("Dashboard", dashboardText, true, true)
 
-	// --- 2. Vakt Audit ---
 	auditView := newOutputView()
 	runAuditBtn := tview.NewButton("Start Scan").SetSelectedFunc(func() {
 		runInto(auditView, "vakt-audit")
@@ -62,7 +58,6 @@ func main() {
 
 	pages.AddPage("Audit", auditFlex, true, false)
 
-	// --- 3. ZRPKG Manager ---
 	pkgView := newOutputView()
 	pkgInput := tview.NewInputField().
 		SetLabel(" Package: ").
@@ -123,7 +118,6 @@ func main() {
 
 	pages.AddPage("Packages", pkgFlex, true, false)
 
-	// --- 4. Network Status ---
 	netView := newOutputView()
 	refreshNet := func() {
 		netView.Clear()
@@ -145,7 +139,6 @@ func main() {
 
 	pages.AddPage("Network", netFlex, true, false)
 
-	// --- 5. Wi-Fi Setup ---
 	// Saving here is the only way to configure wireless now that boot no
 	// longer prompts; vakt-net notices the new file and connects on its own.
 	wifiResult := tview.NewTextView().SetDynamicColors(true)
@@ -188,7 +181,6 @@ func main() {
 
 	pages.AddPage("WiFi", wifiFlex, true, false)
 
-	// --- 6. Services ---
 	servicesView := newOutputView()
 	servicesView.SetTitle(" Services ")
 	refreshServices := func() {
@@ -211,7 +203,6 @@ func main() {
 
 	pages.AddPage("Services", servicesFlex, true, false)
 
-	// --- 7. Intrusion Detection ---
 	idsView := newOutputView()
 	idsView.SetTitle(" Alerts ")
 	refreshIDS := func() {
@@ -226,7 +217,6 @@ func main() {
 
 	pages.AddPage("IDS", idsFlex, true, false)
 
-	// --- 8. Power ---
 	// The panel runs unprivileged and cannot signal PID 1, so shutting down
 	// goes through vakt-init's control socket. Doing it any other way would
 	// cut power with the data disk still mounted.
@@ -263,7 +253,6 @@ func main() {
 
 	pages.AddPage("Power", powerFlex, true, false)
 
-	// --- Menu List ---
 	list := tview.NewList().
 		AddItem("Dashboard", "Overview of system status", 'd', func() {
 			pages.SwitchToPage("Dashboard")
@@ -307,7 +296,6 @@ func main() {
 		})
 	list.SetBorder(true).SetTitle(" Main Menu ")
 
-	// Global ESC key to return to menu
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEsc {
 			app.SetFocus(list)
@@ -315,7 +303,6 @@ func main() {
 		return event
 	})
 
-	// Layout
 	flex := tview.NewFlex().
 		AddItem(list, 0, 1, true).
 		AddItem(pages, 0, 3, false)
