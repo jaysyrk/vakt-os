@@ -2,6 +2,8 @@
 
 [Readme](README.md) | [Roadmap](ROADMAP.md) | [Contributing](CONTRIBUTING.md)
 
+**Claude was used solely for .md formats and .sh scripts**
+
 A Linux security appliance built from scratch — custom init, package manager,
 TUI panel, service supervisor, and framebuffer compositor, in Rust, Go, and
 Zig. No systemd, no glibc userland, no distro underneath: a static busybox
