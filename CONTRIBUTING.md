@@ -43,6 +43,19 @@ sudo VAKT_KERNEL=custom ./build.sh    # slow: builds the monolithic kernel from 
 
 Then boot it with the QEMU command the build prints at the end.
 
+### Fuzzing
+
+`pkg-manager/fuzz/` has `cargo-fuzz` targets for the parsers that handle
+untrusted, network-sourced input before anything trusts it - archive path
+validation, manifest JSON, and signature verification. Requires a nightly
+toolchain and `cargo install cargo-fuzz`; not part of default CI. See
+[`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md) for what each target
+covers and why.
+
+```bash
+cd pkg-manager && cargo +nightly fuzz run safe_relative
+```
+
 ## Before you open a pull request
 
 CI runs all of this, so running it first saves a round trip:
@@ -102,8 +115,10 @@ genuinely separate check.
 | `vakt-compositor/` | Framebuffer rendering |
 | `vakt-verify/` | Independent Ed25519/SHA-256 package signature verifier (Zig) |
 | `tools/cmd/` | The Go tools: panel, audit, IDS, repository server |
+| `tools/vakt-backup`, `tools/vakt-restore` | Data-disk backup/restore, POSIX sh, ships in the image |
 | `build-system/` | Kernel configuration and builder, repository builder, logo |
 | `deploy/` | Running the repository on a rented server: systemd unit, publish script |
+| `docs/OPERATIONS.md` | Operator runbook: lockouts, crash loops, IDS alerts, backups |
 | `build.sh` | Assembles the rootfs and the ISO |
 
 ## Adding a package to the repository

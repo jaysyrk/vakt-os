@@ -172,6 +172,16 @@ pub fn render(repo_url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// `cargo test` runs tests in the same binary on separate threads by
+    /// default, and environment variables are process-global - two tests
+    /// that touch REPO_URL_ENV concurrently can genuinely race, which is
+    /// exactly what the `unsafe` on `env::set_var`/`remove_var` is warning
+    /// about. Every test below that sets, clears, or depends on this
+    /// variable being unset takes this lock first, so at most one of them
+    /// runs at a time.
+    static REPO_URL_ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn reads_the_repo_url() {
@@ -253,6 +263,9 @@ mod tests {
 
     #[test]
     fn the_environment_wins_over_everything() {
+        let _guard = REPO_URL_ENV_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var(REPO_URL_ENV, "https://from-the-environment.example/") };
         let config = load_from("/nonexistent/persistent", "/nonexistent/fallback");
         unsafe { std::env::remove_var(REPO_URL_ENV) };
@@ -263,6 +276,9 @@ mod tests {
 
     #[test]
     fn the_persistent_file_wins_over_the_image_default() {
+        let _guard = REPO_URL_ENV_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("zrpkg-conf-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -281,6 +297,9 @@ mod tests {
 
     #[test]
     fn with_nothing_configured_the_qemu_host_is_used() {
+        let _guard = REPO_URL_ENV_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let config = load_from("/nonexistent/persistent", "/nonexistent/fallback");
         assert_eq!(config.repo_url, DEFAULT_REPO_URL);
         assert_eq!(config.source, Source::Default);

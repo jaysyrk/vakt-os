@@ -326,6 +326,12 @@ mod tests {
     use super::*;
     use flate2::Compression;
     use flate2::write::GzEncoder;
+    use std::sync::Mutex;
+
+    /// See the identical lock in config.rs: cargo test runs tests on separate
+    /// threads by default, and both tests below touch the process-global
+    /// ZRPKG_PUBKEY - without this they can race each other's set/remove.
+    static ZRPKG_PUBKEY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn scratch(tag: &str) -> PathBuf {
         let dir =
@@ -441,6 +447,9 @@ mod tests {
     /// absence has to be an error rather than a warning.
     #[test]
     fn a_missing_trust_anchor_is_an_error() {
+        let _guard = ZRPKG_PUBKEY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("ZRPKG_PUBKEY", "   ") };
         let error = trusted_public_key().unwrap_err().to_string();
         unsafe { std::env::remove_var("ZRPKG_PUBKEY") };
@@ -454,6 +463,9 @@ mod tests {
 
     #[test]
     fn an_explicit_key_in_the_environment_is_used() {
+        let _guard = ZRPKG_PUBKEY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("ZRPKG_PUBKEY", " deadbeef ") };
         let key = trusted_public_key().unwrap();
         unsafe { std::env::remove_var("ZRPKG_PUBKEY") };

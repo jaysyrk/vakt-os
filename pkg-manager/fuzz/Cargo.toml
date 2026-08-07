@@ -1,0 +1,36 @@
+[package]
+name = "zrpkg-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+libfuzzer-sys = "0.4"
+
+[dependencies.zrpkg]
+path = ".."
+
+[[bin]]
+name = "safe_relative"
+path = "fuzz_targets/safe_relative.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "manifest_parse"
+path = "fuzz_targets/manifest_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verify_signature"
+path = "fuzz_targets/verify_signature.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,55 @@
+#!/bin/sh
+# Restores a backup made by vakt-backup. POSIX sh, not bash: this ships in
+# the image and runs under busybox's ash, which is what /bin/sh is there.
+set -eu
+
+usage() {
+    echo "usage: vakt-restore <backup.tar.gz> <destination-dir>" >&2
+    echo "" >&2
+    echo "Verifies <backup.tar.gz>.sha256 before touching the destination." >&2
+    exit 1
+}
+
+[ $# -eq 2 ] || usage
+backup=$1
+dest=$2
+
+if [ ! -f "$backup" ]; then
+    echo "[!] $backup does not exist" >&2
+    exit 1
+fi
+
+checksum_file="$backup.sha256"
+if [ ! -f "$checksum_file" ]; then
+    echo "[!] No checksum file at $checksum_file - refusing an unverifiable backup" >&2
+    exit 1
+fi
+
+echo "[+] Verifying checksum..."
+expected=$(awk '{print $1}' "$checksum_file")
+actual=$(sha256sum "$backup" | awk '{print $1}')
+if [ "$expected" != "$actual" ]; then
+    echo "[!] Checksum mismatch: the backup is corrupted or was tampered with." >&2
+    echo "    expected: $expected" >&2
+    echo "    actual:   $actual" >&2
+    exit 1
+fi
+echo "[+] Checksum OK."
+
+# find, not ls -A: -mindepth/-maxdepth/-quit are supported by busybox find,
+# and this avoids depending on ls -A's exact behavior across shells.
+if [ -d "$dest" ] && [ -n "$(find "$dest" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+    echo "[!] $dest is not empty." >&2
+    echo "    Move or remove its contents first - restoring on top of an" >&2
+    echo "    existing tree could leave a mix of old and restored files." >&2
+    exit 1
+fi
+
+mkdir -p "$dest"
+echo "[+] Extracting..."
+tar -C "$dest" --strip-components=1 -xzf "$backup"
+
+echo ""
+echo "========================================"
+echo "  Restored to $dest"
+echo "========================================"

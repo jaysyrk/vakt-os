@@ -160,7 +160,12 @@ vakt-net/                   Networking daemon (Rust)
 vakt-compositor/            Framebuffer compositor (Rust)
 vakt-verify/                Independent signature verifier (Zig)
 tools/cmd/                  Go tools: panel, audit, ids, repo server
+tools/vakt-backup           Backs up /persistent (ships in the image)
+tools/vakt-restore          Restores a vakt-backup archive (ships in the image)
+pkg-manager/fuzz/           cargo-fuzz targets for untrusted-input parsing
 deploy/                     Running the repository on a rented server
+docs/OPERATIONS.md          Runbook: lockouts, crash loops, IDS alerts, backups
+docs/SECURITY_AUDIT.md      Unsafe-block review and fuzzing notes
 .github/workflows/build.yml CI: tests, package pipeline, ISO artifact
 ```
 

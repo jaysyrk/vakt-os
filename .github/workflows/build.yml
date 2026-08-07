@@ -73,7 +73,37 @@ jobs:
         run: zig build test --summary all
 
       - name: Shell scripts parse
-        run: bash -n build.sh build-system/*.sh deploy/*.sh
+        run: bash -n build.sh build-system/*.sh deploy/*.sh tools/vakt-backup tools/vakt-restore
+
+      - name: Backup and restore round trip
+        run: |
+          set -eu
+          WORK=$(mktemp -d)
+          SRC="$WORK/persistent"
+          mkdir -p "$SRC/etc" "$SRC/zrpkg/usr/bin"
+          echo "ssid=TestNet" > "$SRC/etc/vakt-net.conf"
+          head -c 51200 /dev/urandom > "$SRC/zrpkg/usr/bin/big"
+
+          sh tools/vakt-backup "$SRC" "$WORK/backup.tar.gz"
+
+          # A tampered checksum must be refused before anything is touched.
+          cp "$WORK/backup.tar.gz.sha256" "$WORK/backup.tar.gz.sha256.orig"
+          echo "0000000000000000000000000000000000000000000000000000000000000000  backup.tar.gz" \
+            > "$WORK/backup.tar.gz.sha256"
+          if sh tools/vakt-restore "$WORK/backup.tar.gz" "$WORK/restore-bad" 2>/dev/null; then
+            echo "vakt-restore accepted a tampered checksum"; exit 1
+          fi
+          cp "$WORK/backup.tar.gz.sha256.orig" "$WORK/backup.tar.gz.sha256"
+
+          sh tools/vakt-restore "$WORK/backup.tar.gz" "$WORK/restore-good"
+          diff -r "$SRC" "$WORK/restore-good"
+
+          # Refuses to restore on top of an existing tree.
+          mkdir -p "$WORK/restore-occupied" && touch "$WORK/restore-occupied/stray"
+          if sh tools/vakt-restore "$WORK/backup.tar.gz" "$WORK/restore-occupied" 2>/dev/null; then
+            echo "vakt-restore wrote into a non-empty destination"; exit 1
+          fi
+          echo "backup/restore round trip verified"
 
       - name: Package manager integration
         run: |
