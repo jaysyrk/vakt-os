@@ -166,6 +166,7 @@ pkg-manager/fuzz/           cargo-fuzz targets for untrusted-input parsing
 deploy/                     Running the repository on a rented server
 docs/OPERATIONS.md          Runbook: lockouts, crash loops, IDS alerts, backups
 docs/SECURITY_AUDIT.md      Unsafe-block review and fuzzing notes
+docs/HARDWARE_VALIDATION.md Checklist for testing a build on real hardware
 .github/workflows/build.yml CI: tests, package pipeline, ISO artifact
 ```
 

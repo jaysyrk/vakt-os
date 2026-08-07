@@ -174,4 +174,7 @@ code.
   behavior can only be validated on real machines, which this environment
   does not have access to. This is the one item on the list that isn't a
   design question at all - it just needs someone with the hardware to run
-  the ISO and report back.
+  the ISO and report back. [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md)
+  is the checklist for that pass, covering Secure Boot, boot sequence,
+  storage controller detection, wired/Wi-Fi networking, panel input,
+  package install, IDS alerting, and shutdown - not just "did it boot."
