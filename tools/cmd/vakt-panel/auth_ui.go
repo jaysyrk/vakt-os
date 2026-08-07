@@ -12,8 +12,15 @@ import (
 // Either path ends by calling unlock, which swaps the running application's
 // root for the real panel - tview allows changing the root at any time, so
 // there is no second call to app.Run().
-func authGateRoot(app *tview.Application, mainLayout, focusAfter tview.Primitive) tview.Primitive {
+//
+// onUnlock runs before the swap. main.go uses it to arm the global Esc
+// handler, which targets the main menu - a primitive that does not exist
+// anywhere in the lock/setup screen's tree, so firing it early leaves no
+// focused primitive in the visible screen at all and the form stops taking
+// keyboard input for the rest of the session.
+func authGateRoot(app *tview.Application, mainLayout, focusAfter tview.Primitive, onUnlock func()) tview.Primitive {
 	unlock := func() {
+		onUnlock()
 		app.SetRoot(mainLayout, true).SetFocus(focusAfter)
 	}
 

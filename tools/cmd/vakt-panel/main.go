@@ -378,8 +378,12 @@ func main() {
 		})
 	list.SetBorder(true).SetTitle(" Main Menu ")
 
+	// Esc targets list, which is not part of the lock/setup screen's tree -
+	// guarded by unlocked so it does nothing until the real menu is what's
+	// actually on screen, rather than pulling focus out of the PIN form.
+	unlocked := false
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyEsc {
+		if unlocked && event.Key() == tcell.KeyEsc {
 			app.SetFocus(list)
 		}
 		return event
@@ -399,7 +403,8 @@ func main() {
 		AddItem(flex, 0, 1, true)
 
 	app.EnableMouse(true)
-	if err := app.SetRoot(authGateRoot(app, mainLayout, list), true).Run(); err != nil {
+	gate := authGateRoot(app, mainLayout, list, func() { unlocked = true })
+	if err := app.SetRoot(gate, true).Run(); err != nil {
 		panic(err)
 	}
 }
