@@ -3,6 +3,7 @@ package main
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,17 +21,19 @@ type bucket struct {
 // rateLimiter is a per-IP token bucket: each client IP gets its own bucket
 // that refills at a fixed rate up to a cap, and is denied once it runs dry.
 type rateLimiter struct {
-	mu      sync.Mutex
-	buckets map[string]*bucket
-	rate    float64 // tokens added per second
-	burst   float64 // bucket capacity
+	mu         sync.Mutex
+	buckets    map[string]*bucket
+	rate       float64 // tokens added per second
+	burst      float64 // bucket capacity
+	trustProxy bool
 }
 
-func newRateLimiter(rate, burst float64) *rateLimiter {
+func newRateLimiter(rate, burst float64, trustProxy bool) *rateLimiter {
 	rl := &rateLimiter{
-		buckets: make(map[string]*bucket),
-		rate:    rate,
-		burst:   burst,
+		buckets:    make(map[string]*bucket),
+		rate:       rate,
+		burst:      burst,
+		trustProxy: trustProxy,
 	}
 	go rl.evictStale()
 	return rl
@@ -83,7 +86,7 @@ func (rl *rateLimiter) evictOlderThan(cutoff time.Time) {
 // runs.
 func (rl *rateLimiter) limit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !rl.allow(clientIP(r), time.Now()) {
+		if !rl.allow(rl.clientIP(r), time.Now()) {
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
@@ -92,12 +95,38 @@ func (rl *rateLimiter) limit(next http.Handler) http.Handler {
 	})
 }
 
-// clientIP strips the port RemoteAddr carries, falling back to the whole
-// value if it is not in host:port form.
-func clientIP(r *http.Request) string {
+// clientIP returns the address a request should be rate-limited under.
+//
+// With trustProxy off (the default), this is always the direct TCP peer -
+// safe against spoofing, but every request looks identical when something
+// like the documented nginx reverse proxy sits in front of this server,
+// since RemoteAddr is then always the proxy's own loopback address rather
+// than the real client. With trustProxy on, a direct connection that is
+// itself from loopback is assumed to be that proxy, and its X-Real-IP
+// header - which only the proxy sits close enough to set correctly, not the
+// original client - is trusted instead. A request arriving directly (not
+// via loopback) still can't set X-Real-IP to dodge its own limit.
+func (rl *rateLimiter) clientIP(r *http.Request) string {
+	host := remoteAddrHost(r)
+	if rl.trustProxy && isLoopback(host) {
+		if real := strings.TrimSpace(r.Header.Get("X-Real-IP")); real != "" {
+			return real
+		}
+	}
+	return host
+}
+
+// remoteAddrHost strips the port RemoteAddr carries, falling back to the
+// whole value if it is not in host:port form.
+func remoteAddrHost(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+func isLoopback(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

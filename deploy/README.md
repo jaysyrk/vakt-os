@@ -100,11 +100,20 @@ server {
 
     location / {
         proxy_pass http://127.0.0.1:8080;
+        proxy_set_header X-Real-IP $remote_addr;
         # .zrp archives are large; do not buffer the whole thing first.
         proxy_buffering off;
     }
 }
 ```
+
+`X-Real-IP` matters beyond logging: `zrpkg-server`'s rate limiter is per-IP, and
+without it every request arrives from `127.0.0.1` as far as the server can
+tell, collapsing every real client into one shared limit. Add `-trust-proxy`
+to `ExecStart` when running behind this (or any) reverse proxy on the same
+host, so the server reads the real client address back out of that header
+instead — it only does this for connections that are themselves from
+loopback, so a client can't set its own `X-Real-IP` to dodge its limit.
 
 **Directly**, if you would rather not run a proxy:
 
@@ -137,7 +146,8 @@ it to a VM on your laptop, so `zrpkg-server` is deliberately narrow:
 - Bounded read, write, header and idle timeouts.
 - Per-IP rate limiting (`-rate-limit`, default 5 req/s, burst `-rate-burst`,
   default 20). A client past its budget gets `429` before any file is touched.
-  Set `-rate-limit 0` to disable.
+  Set `-rate-limit 0` to disable. Behind a reverse proxy, pass `-trust-proxy`
+  (and see the TLS section) or every client shares one limit.
 - `SIGTERM` drains in-flight downloads before exiting.
 
 ## Rotating the signing key

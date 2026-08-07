@@ -12,6 +12,11 @@
 #
 # For TLS, either put a reverse proxy in front (see deploy/README.md) or pass
 # -tls-cert and -tls-key below and let this serve HTTPS directly.
+#
+# Binding to loopback means this assumes a reverse proxy in front, per
+# deploy/README.md - -trust-proxy tells the rate limiter to read the real
+# client address back out of the X-Real-IP header that proxy config sets,
+# rather than seeing every request as coming from the proxy itself.
 
 [Unit]
 Description=Vakt OS package repository
@@ -23,7 +28,7 @@ Wants=network-online.target
 Type=exec
 User=zrpkg
 Group=zrpkg
-ExecStart=/usr/local/bin/zrpkg-server -dir /var/lib/zrpkg/repo -addr 127.0.0.1:8080
+ExecStart=/usr/local/bin/zrpkg-server -dir /var/lib/zrpkg/repo -addr 127.0.0.1:8080 -trust-proxy
 Restart=on-failure
 RestartSec=5s
 

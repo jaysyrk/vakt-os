@@ -54,6 +54,9 @@ func main() {
 	quiet := flag.Bool("quiet", false, "Do not log individual requests")
 	rateLimit := flag.Float64("rate-limit", 5, "Max sustained requests per second, per client IP (0 disables)")
 	rateBurst := flag.Float64("rate-burst", 20, "Requests a client IP may burst before the rate limit applies")
+	trustProxy := flag.Bool("trust-proxy", false, "Trust X-Real-IP from a direct loopback connection for rate "+
+		"limiting - only set this when running behind a reverse proxy on the same host that sets it, or every "+
+		"client collapses into one shared rate limit")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.LUTC)
@@ -76,7 +79,7 @@ func main() {
 
 	handler := repoHandler(repoDir, *quiet)
 	if *rateLimit > 0 {
-		handler = newRateLimiter(*rateLimit, *rateBurst).limit(handler)
+		handler = newRateLimiter(*rateLimit, *rateBurst, *trustProxy).limit(handler)
 	}
 
 	server := &http.Server{
@@ -103,6 +106,12 @@ func main() {
 	}
 	if *rateLimit > 0 {
 		log.Printf("Rate limit: %.0f req/s per IP, burst %.0f", *rateLimit, *rateBurst)
+		if *trustProxy {
+			log.Print("Rate limit: trusting X-Real-IP from loopback connections")
+		} else {
+			log.Print("Rate limit: keyed on the direct connection's address - if a reverse " +
+				"proxy sits in front of this, every client shares one bucket unless -trust-proxy is set")
+		}
 	} else {
 		log.Print("Rate limit: disabled (-rate-limit 0)")
 	}
