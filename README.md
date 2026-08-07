@@ -2,7 +2,7 @@
 
 [Readme](README.md) | [Roadmap](ROADMAP.md) | [Contributing](CONTRIBUTING.md)
 
-**Claude was used solely for .md formats and .sh scripts**
+**Claude was used solely for .md formats, .sh scripts, and git push automation**
 
 A Linux security appliance built from scratch — custom init, package manager,
 TUI panel, service supervisor, and framebuffer compositor, in Rust, Go, and
