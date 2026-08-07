@@ -6,23 +6,15 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
-
-# The whole project targets Arch: build.sh installs its dependencies with
-# pacman, and the image reuses the host's wpa_supplicant and CA bundle. Running
-# CI anywhere else would test a build nobody performs.
+  
 env:
   CARGO_TERM_COLOR: always
 
-# The build scripts use brace expansion and other bash features. In a container
-# job GitHub picks the first shell it finds, which is not guaranteed to be bash,
-# so say so rather than depending on what the image happens to ship.
 defaults:
   run:
     shell: bash
 
 jobs:
-  # Fast feedback. Everything here runs in seconds and catches the mistakes
-  # that are not worth a twenty-minute kernel compile to discover.
   test:
     name: test
     runs-on: ubuntu-latest
@@ -83,10 +75,7 @@ jobs:
       - name: Shell scripts parse
         run: bash -n build.sh build-system/*.sh deploy/*.sh
 
-      # The package pipeline end to end, against a repository served over HTTP
-      # exactly as the VM would see it: pack and sign three packages in a
-      # dependency chain, install the top one, and confirm the graph was walked
-      # in the right order and that removal puts the tree back.
+
       - name: Package manager integration
         run: |
           set -eu
@@ -112,10 +101,6 @@ jobs:
           "$ZRPKG" pack "$WORK/stage/tool" "$KEY" -o "$WORK/repo" --version 1.0.0 \
                   --description tool --depends mid  > /dev/null
 
-          # The whole point of vakt-verify: a completely separate
-          # implementation (Zig, not Rust; std.crypto, not ed25519-dalek) has
-          # to agree with zrpkg on every archive it just signed, and has to
-          # independently reject one that was not.
           for pkg in base mid tool; do
             "$VAKT_VERIFY" "$WORK/repo/$pkg.zrp" "$WORK/repo/$pkg.json" --pubkey "$PUB" || {
               echo "vakt-verify disagreed with zrpkg's own signature for $pkg"; exit 1;
@@ -135,11 +120,6 @@ jobs:
           ]}
           JSON
 
-          # Served by the project's own repository server, so the test
-          # exercises the pair that actually ship together. Its output goes to
-          # a file rather than the step's log: a background process holding the
-          # step's stdout open keeps the step running after the script is done.
-          ./tools/bin/zrpkg-server -dir "$WORK/repo" -addr 127.0.0.1:8099 \
             > "$WORK/server.log" 2>&1 &
           SERVER=$!
           trap 'kill "$SERVER" 2>/dev/null || true' EXIT
@@ -163,28 +143,22 @@ jobs:
             echo "dependencies were not installed first"; cat "$WORK/install.log"; exit 1;
           }
 
-          # A package still needed by another must not come out.
           if "$ZRPKG" remove base 2>/dev/null; then
             echo "removing a depended-on package should have failed"; exit 1
           fi
 
-          # A tampered archive must not go in, even though its manifest and
-          # signature are untouched and the repository still serves both.
           head -c 4096 /dev/urandom > "$WORK/repo/tool.zrp"
           rm -rf "$WORK/root"; mkdir -p "$WORK/root"
           if "$ZRPKG" install tool >/dev/null 2>&1; then
             echo "a tampered archive was installed"; exit 1
           fi
 
-          # And with no trust anchor at all, nothing installs.
           unset ZRPKG_PUBKEY
           if "$ZRPKG" install base >/dev/null 2>&1; then
             echo "a package was installed with no trusted key"; exit 1
           fi
           echo "package pipeline verified"
 
-  # The real deliverable. Slow, because it compiles a kernel; cached, because
-  # the kernel source and object tree do not change between runs.
   iso:
     name: iso
     runs-on: ubuntu-latest
@@ -218,9 +192,6 @@ jobs:
           key: zig-${{ hashFiles('vakt-verify/**') }}
           restore-keys: zig-
 
-      # Keyed on the kernel config too: changing which symbols are requested
-      # has to invalidate the object tree, or the ISO would ship a kernel built
-      # from the previous configuration.
       - name: Cache kernel tree
         uses: actions/cache@v4
         with:
@@ -230,16 +201,8 @@ jobs:
 
       - name: Build the ISO
         env:
-          # build.sh now defaults to VAKT_KERNEL=host, the right choice for
-          # real hardware - but that mode copies the build machine's own
-          # /lib/modules and /lib/firmware, which a container does not
-          # meaningfully have. CI instead builds the from-scratch monolithic
-          # kernel, which is also the harder path to keep working and
-          # therefore the one most worth testing on every push.
           VAKT_KERNEL: custom
         run: |
-          # build.sh drops to $SUDO_USER for the compile steps; in a container
-          # everything already runs as root, so point it at root.
           SUDO_USER=root ./build.sh
 
       - name: Summarise the image
@@ -260,8 +223,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # A tag is a release. The ISO is well over the 100MB the repository will
-      # hold, which is why it is a release asset and not a committed file.
+
       - name: Publish the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
