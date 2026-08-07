@@ -6,6 +6,9 @@ build-system/keys/
 target/
 tools/bin/
 tools/vakt-audit
+tools/vakt-ids
+tools/vakt-panel
+tools/zrpkg-server
 vakt-verify/zig-out/
 vakt-verify/.zig-cache/
 

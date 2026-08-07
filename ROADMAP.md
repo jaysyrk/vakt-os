@@ -50,21 +50,21 @@
   - [x] Replace the mocked sysctl check with real /proc/sys reads against the same list vakt-init hardens.
 - [x] **zrpkg-server Rate Limiting**
   - [x] Per-IP token bucket (-rate-limit/-rate-burst), rejecting with 429 before any file is touched.
-- [ ] **OS Image Update Mechanism**
+- [ ] **OS Image Update Mechanism** — deliberately deferred, see notes below.
   - [ ] A way to update the base image (kernel, init, core tools) in the field, not just zrpkg packages.
   - [ ] A/B partitions or another rollback path so a bad update cannot brick a deployed appliance.
-- [ ] **Encrypted Wi-Fi Credentials at Rest**
+- [ ] **Encrypted Wi-Fi Credentials at Rest** — deliberately deferred, see notes below.
   - [ ] Something stronger than root-only file permissions for the PSK in /persistent/etc/vakt-net.conf.
-- [ ] **Fleet Observability**
-  - [ ] Ship logs, metrics or alerts off the device - useful for anyone running more than one appliance.
-- [ ] **Disaster Recovery for /persistent**
-  - [ ] A backup or snapshot path for the data disk; right now corruption there is simply unrecoverable.
-- [ ] **Security Audit**
-  - [ ] Fuzzing and a focused review of every `unsafe` Rust block (privilege drop, mmap, ioctl).
-  - [ ] Independent/third-party review before this runs anything that matters.
-- [ ] **Operator Documentation**
-  - [ ] An incident-response runbook, a key-rotation procedure, and steps for recovering a bricked appliance.
-- [ ] **Real Hardware Validation**
+- [x] **Fleet Observability**
+  - [x] Ship logs, metrics or alerts off the device - useful for anyone running more than one appliance.
+- [x] **Disaster Recovery for /persistent**
+  - [x] A backup or snapshot path for the data disk; right now corruption there is simply unrecoverable.
+- [x] **Security Audit**
+  - [x] Fuzzing and a focused review of every `unsafe` Rust block (privilege drop, mmap, ioctl).
+  - [ ] Independent/third-party review before this runs anything that matters. *(out of scope for a solo project - needs an outside reviewer.)*
+- [x] **Operator Documentation**
+  - [x] An incident-response runbook, a key-rotation procedure, and steps for recovering a bricked appliance.
+- [ ] **Real Hardware Validation** — deliberately deferred, see notes below.
   - [ ] CI only proves the ISO builds and boots in a container/QEMU; physical NICs, Wi-Fi chipsets, storage controllers and Secure Boot still need testing on real machines.
 
 ---
@@ -123,3 +123,55 @@ setter ran, not that hardening exists. This is the same independence argument
 balancer would give each instance its own budget per IP rather than one
 shared budget - fine for the single-server deployment this project documents,
 worth knowing before scaling past it.
+
+**Fleet observability is a webhook, not a metrics pipeline.** `vakt-ids` can
+POST each alert as JSON to an operator-chosen URL
+([docs/OPERATIONS.md](docs/OPERATIONS.md#sending-ids-alerts-to-a-webhook-fleet-setups)),
+best-effort with a 5-second timeout and no retry - the alert file stays the
+durable record. Deliberately the smallest thing that gets alerts off a single
+box: a real metrics/logs pipeline (Prometheus exposition, structured log
+shipping) is a much bigger surface and wasn't what "useful for anyone running
+more than one appliance" required.
+
+**Backup/restore covers `/persistent`, not the base image.** `vakt-backup`
+and `vakt-restore` ([docs/OPERATIONS.md](docs/OPERATIONS.md#backing-up-and-restoring-persistent))
+handle the one thing that's actually irreplaceable on a running appliance -
+the data disk. The base image is already reproducible from this repository,
+so it never needed a backup path; that's also why OS image updates (below)
+are a separate, harder problem from this one.
+
+**Security audit found and fixed one real bug.** The unsafe-block review
+turned up a genuine data race between parallel tests sharing a process-global
+environment variable, not just a documentation pass - see
+[docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md) for the finding, the fix,
+and the three new `cargo-fuzz` targets covering `zrpkg`'s untrusted-input
+parsing. The one box deliberately left unchecked is independent/third-party
+review, which by definition can't be done by the same person who wrote the
+code.
+
+**Why three items are still deferred, not silently dropped:**
+
+- **OS image update mechanism.** This needs A/B partitions or an equivalent
+  rollback path, which is a boot/partition-layout redesign - not something
+  to implement without the ability to actually boot-test a bad update and
+  confirm the rollback recovers, which this environment cannot do. Shipping
+  something untested here would be worse than leaving the gap documented:
+  a fake rollback path is more dangerous than no rollback path, because it
+  invites trust it hasn't earned.
+- **Encrypting the Wi-Fi PSK at rest.** The appliance is designed to boot and
+  connect to the network unattended, with no prompts - that's the whole
+  point of `/persistent/etc/vakt-net.conf` being readable at boot before
+  anyone is at the console. The only real secret available on the device,
+  the panel PIN, doesn't exist yet at that point in boot: it's entered later,
+  after the network already needed the PSK. Encrypting the PSK with anything
+  meaningfully stronger than root-only file permissions needs a key that's
+  available before boot-time network bring-up, and this appliance doesn't
+  have one - solving it well means either changing what "unattended boot"
+  means or introducing a hardware key store, both bigger decisions than a
+  quick pass on this line item should make unilaterally.
+- **Real hardware validation.** CI proves the ISO builds and boots under
+  QEMU. Physical NICs, Wi-Fi chipsets, storage controllers, and Secure Boot
+  behavior can only be validated on real machines, which this environment
+  does not have access to. This is the one item on the list that isn't a
+  design question at all - it just needs someone with the hardware to run
+  the ISO and report back.
