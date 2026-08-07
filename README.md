@@ -1,6 +1,6 @@
 # Vakt OS
 
-[Readme](README.md) | [Roadmap](ROADMAP.md) | [Contributing](CONTRIBUTING.md)
+| [Roadmap](ROADMAP.md) |
 
 **Claude was used solely for .md formats, .sh scripts, and git push automation**
 
