@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/jaysyrk/vakt-os/security/advisories/new
+    about: Do not open a public issue for a vulnerability — report it privately here. See SECURITY.md.

@@ -1,0 +1,71 @@
+name: Bug report
+description: Something in the image, a tool, or the build doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Found a security vulnerability? Don't file it here — use the
+        **Security** tab's "Report a vulnerability" instead. See
+        [SECURITY.md](../../SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what actually happened.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce it
+      description: >
+        Exact commands, config, or steps. For a boot/runtime bug, note
+        whether it's in QEMU or on real hardware, and VAKT_KERNEL=host or
+        =custom.
+      placeholder: |
+        1. sudo VAKT_KERNEL=custom ./build.sh
+        2. qemu-system-x86_64 ...
+        3. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Where it is
+      options:
+        - vakt-init (PID 1 / boot / supervisor / shutdown)
+        - zrpkg (package manager)
+        - vakt-verify (signature re-check)
+        - vakt-net (networking)
+        - vakt-compositor (framebuffer)
+        - vakt-panel (TUI)
+        - vakt-audit / vakt-ids
+        - zrpkg-server (repository server)
+        - build.sh / build-system (kernel, repo build)
+        - CI
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Build host OS/arch, kernel mode, QEMU version or hardware model, commit or tag.
+      placeholder: |
+        Build host: Arch Linux x86_64
+        VAKT_KERNEL: host
+        Commit: <git rev-parse HEAD>
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Boot log, build output, or command output. This is rendered as a code block automatically.
+      render: shell
