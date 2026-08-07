@@ -131,23 +131,27 @@ fn main() {
         }
     }
 
-    // Draw a blue square in the middle (Vakt OS Mock GUI)
+    // Draw a blue square in the middle (Vakt OS Mock GUI). Skipped on a
+    // display smaller than the square itself, rather than computing a
+    // position from an underflowed subtraction.
     let square_size = 300;
-    let start_x = (vinfo.xres - square_size) / 2;
-    let start_y = (vinfo.yres - square_size) / 2;
+    if vinfo.xres >= square_size && vinfo.yres >= square_size {
+        let start_x = (vinfo.xres - square_size) / 2;
+        let start_y = (vinfo.yres - square_size) / 2;
 
-    for y in start_y..(start_y + square_size) {
-        for x in start_x..(start_x + square_size) {
-            let location = (x + vinfo.xoffset) * (vinfo.bits_per_pixel / 8)
-                + (y + vinfo.yoffset) * finfo.line_length;
+        for y in start_y..(start_y + square_size) {
+            for x in start_x..(start_x + square_size) {
+                let location = (x + vinfo.xoffset) * (vinfo.bits_per_pixel / 8)
+                    + (y + vinfo.yoffset) * finfo.line_length;
 
-            let loc = location as usize;
-            if loc + 3 < screensize {
-                if vinfo.bits_per_pixel == 32 {
-                    map[loc] = 255; // B
-                    map[loc + 1] = 50; // G
-                    map[loc + 2] = 50; // R
-                    map[loc + 3] = 0; // A
+                let loc = location as usize;
+                if loc + 3 < screensize {
+                    if vinfo.bits_per_pixel == 32 {
+                        map[loc] = 255; // B
+                        map[loc + 1] = 50; // G
+                        map[loc + 2] = 50; // R
+                        map[loc + 3] = 0; // A
+                    }
                 }
             }
         }
