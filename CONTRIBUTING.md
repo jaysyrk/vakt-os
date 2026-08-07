@@ -29,6 +29,7 @@ build it. Arch's `extra/zig` package tracks this.
 cargo test --manifest-path vakt-init/Cargo.toml
 cargo test --manifest-path pkg-manager/Cargo.toml
 cargo test --manifest-path vakt-net/Cargo.toml
+cargo test --manifest-path vakt-update/Cargo.toml
 cd tools && go test ./cmd/...
 cd vakt-verify && zig build test
 ```
@@ -56,12 +57,24 @@ covers and why.
 cd pkg-manager && cargo +nightly fuzz run safe_relative
 ```
 
+### OS image A/B updates
+
+`vakt-update/` and `vakt-init/src/update.rs` implement in-field updates to
+the kernel and image itself, not just `zrpkg` packages - see
+[`docs/OS_UPDATES.md`](docs/OS_UPDATES.md). This is implemented and
+unit/CI tested but **unvalidated on real boot hardware** - if you touch any
+of it, say so plainly in the pull request and update that doc's "what's
+verified" section rather than letting it go stale. Anyone testing it for
+real should read
+[`docs/HARDWARE_VALIDATION.md`](docs/HARDWARE_VALIDATION.md#os-image-ab-updates)
+first.
+
 ## Before you open a pull request
 
 CI runs all of this, so running it first saves a round trip:
 
 ```bash
-for c in pkg-manager vakt-init vakt-net vakt-compositor; do
+for c in pkg-manager vakt-init vakt-net vakt-compositor vakt-update; do
     cargo fmt --manifest-path $c/Cargo.toml --check
 done
 gofmt -l tools            # must print nothing
@@ -114,6 +127,7 @@ genuinely separate check.
 | `vakt-net/` | The networking daemon and its Landlock sandbox |
 | `vakt-compositor/` | Framebuffer rendering |
 | `vakt-verify/` | Independent Ed25519/SHA-256 package signature verifier (Zig) |
+| `vakt-update/` | A/B OS image updater - unvalidated on real hardware, see docs/OS_UPDATES.md |
 | `tools/cmd/` | The Go tools: panel, audit, IDS, repository server |
 | `tools/vakt-backup`, `tools/vakt-restore` | Data-disk backup/restore, POSIX sh, ships in the image |
 | `build-system/` | Kernel configuration and builder, repository builder, logo |

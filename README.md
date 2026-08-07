@@ -32,6 +32,7 @@ GRUB → vmlinuz → initramfs → /init (vakt-init, Rust, PID 1)
 | `zrpkg` | Rust | Package manager: resolve, fetch, verify, install, remove. |
 | `zrpkg-server` | Go | HTTP repository server, rate-limited. |
 | `vakt-verify` | Zig | Independent, from-scratch signature re-check. |
+| `vakt-update` | Rust | A/B OS image updates, unvalidated on real hardware — see [docs/OS_UPDATES.md](docs/OS_UPDATES.md). |
 
 ## Security model
 
@@ -100,8 +101,15 @@ qemu-system-x86_64 -m 2G -enable-kvm \
 
 ```bash
 sudo dd if=vakt-os.iso of=/dev/sdX bs=4M status=progress conv=fsync   # boot USB
-sudo mkfs.ext4 /dev/sdY                                               # persistent disk
+sudo mkfs.ext4 -L VAKTDATA /dev/sdY                                   # persistent disk
 ```
+
+The `VAKTDATA` label isn't optional on real hardware the way it's harmless in
+a VM: GRUB finds the persistent disk by filesystem label (it doesn't use
+Linux device names like `/dev/sda`), and the A/B update mechanism
+([docs/OS_UPDATES.md](docs/OS_UPDATES.md)) depends on it being findable that
+way. An unlabeled disk still works for everything else; it just can't be
+found by GRUB for an OS update.
 
 Disable Secure Boot (GRUB here isn't signed for it). Point `zrpkg` at a real
 repository — there's no QEMU gateway on real hardware.
@@ -155,17 +163,36 @@ zrpkg repo https://packages.example.com
 See [`deploy/README.md`](deploy/README.md) for the systemd unit, TLS, and
 rate limiting.
 
+## OS updates
+
+> **Unvalidated on real hardware** — implemented and tested everywhere except
+> an actual reboot. Read [docs/OS_UPDATES.md](docs/OS_UPDATES.md) before
+> relying on this for anything you can't recover by hand.
+
+An A/B mechanism for updating the kernel and image itself, not just `zrpkg`
+packages — the boot medium (slot A) is never touched; an update lands as
+slot B on `/persistent`, and vakt-init rolls back to slot A on its own if
+slot B never reaches a working boot.
+
+```bash
+sudo ./build-system/mkupdate.sh 1.1.0   # build + sign a new slot B
+vakt-update check                       # on the appliance: what's available
+vakt-update apply --reboot              # fetch, verify, stage, reboot into it
+```
+
 ## Layout
 
 ```
 build.sh                    Full ISO build
 build-system/mkkernel.sh    Builds the monolithic kernel
 build-system/mkrepo.sh      Builds and signs the package repository
+build-system/mkupdate.sh    Builds and signs an A/B update bundle (slot B)
 pkg-manager/                zrpkg (Rust)
 vakt-init/                  PID 1, supervisor, readiness, shutdown (Rust)
 vakt-net/                   Networking daemon (Rust)
 vakt-compositor/            Framebuffer compositor (Rust)
 vakt-verify/                Independent signature verifier (Zig)
+vakt-update/                A/B OS image updater (Rust) - see docs/OS_UPDATES.md
 tools/cmd/                  Go tools: panel, audit, ids, repo server
 tools/vakt-backup           Backs up /persistent (ships in the image)
 tools/vakt-restore          Restores a vakt-backup archive (ships in the image)
@@ -174,6 +201,7 @@ deploy/                     Running the repository on a rented server
 docs/OPERATIONS.md          Runbook: lockouts, crash loops, IDS alerts, backups
 docs/SECURITY_AUDIT.md      Unsafe-block review and fuzzing notes
 docs/HARDWARE_VALIDATION.md Checklist for testing a build on real hardware
+docs/OS_UPDATES.md          A/B update design - implemented, unvalidated on real hardware
 .github/workflows/build.yml CI: tests, package pipeline, ISO artifact
 ```
 
@@ -183,13 +211,16 @@ docs/HARDWARE_VALIDATION.md Checklist for testing a build on real hardware
 cargo test --manifest-path vakt-init/Cargo.toml
 cargo test --manifest-path pkg-manager/Cargo.toml
 cargo test --manifest-path vakt-net/Cargo.toml
+cargo test --manifest-path vakt-update/Cargo.toml
 cd tools && go test ./cmd/...
 cd vakt-verify && zig build test
 ```
 
 CI runs all of these, then a full package pipeline (pack, sign, install,
-tamper detection), then builds the ISO. Tagging `v*` publishes it as a
-release asset.
+tamper detection), then builds the ISO and, separately, builds and applies a
+signed A/B update bundle end to end against a local repository (see
+[docs/OS_UPDATES.md](docs/OS_UPDATES.md) for what that does and doesn't
+prove). Tagging `v*` publishes the ISO as a release asset.
 
 ## Third-party components
 

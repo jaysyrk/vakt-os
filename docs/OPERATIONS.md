@@ -144,6 +144,36 @@ collector logs a warning and never blocks scanning or crashes the daemon.
 There's no retry — the alert file is still the durable record; the webhook
 is a notification, not a queue.
 
+## Updating the OS image itself
+
+> **Unvalidated on real hardware as of this writing.** Read
+> [OS_UPDATES.md](OS_UPDATES.md) before applying this to an appliance you
+> can't get physical console access to. Confirm `vakt.rootshell` works on
+> this specific machine first.
+
+`zrpkg` updates packages; it does not update the kernel, `vakt-init`, or any
+other tool baked into the image itself. That's what `vakt-update` is for -
+an A/B mechanism where the boot medium (slot A) is never touched, an update
+lands as slot B on `/persistent`, and the appliance automatically rolls back
+to slot A on its own if slot B doesn't reach a working boot within 3
+attempts - no operator action needed for a bad update to self-correct.
+
+```bash
+vakt-update check              # what's staged, what's available
+vakt-update apply              # fetch, verify, stage slot B
+reboot                         # boots into slot B
+```
+
+After rebooting, confirm the appliance actually came up normally (panel
+reachable, `cat /run/services.status` looks healthy) before assuming the
+update is good - if it silently fails to reach readiness, vakt-init will
+already be counting down toward an automatic rollback on the *next* reboot,
+not this one. If you want to force a rollback yourself rather than wait for
+it, reimage from slot A (see
+[Recovering a compromised or badly broken appliance](#recovering-a-compromised-or-badly-broken-appliance)
+below) - there is currently no operator-invoked "roll back now" command
+short of that.
+
 ## Recovering a compromised or badly broken appliance
 
 There is deliberately no in-place "repair" path for an appliance you no

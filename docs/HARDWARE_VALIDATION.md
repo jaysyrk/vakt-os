@@ -111,6 +111,59 @@ config targets.
       hanging (a kernel missing the right ACPI/power-off support for this
       board would hang here, not fail loudly).
 
+## OS image A/B updates
+
+Separate from the sections above: the A/B update mechanism
+([OS_UPDATES.md](OS_UPDATES.md)) is implemented but has never been through an
+actual reboot as of this writing - nothing before this point in the document
+depends on it, but this section does, and it deserves care neither of us has
+been able to give it yet. Work through this only after sections 1-9 above
+pass, on hardware you are prepared to recover by hand (know the
+`vakt.rootshell` GRUB entry works on this machine *before* starting).
+
+1. **Build a slot-B bundle**: `sudo ./build-system/mkupdate.sh test-1.0`,
+   then serve it (`zrpkg-server -dir tools/repo`) and confirm
+   `vakt-update check` from the running appliance sees it.
+2. **Apply it**: `vakt-update apply` (without `--reboot` first). Confirm on
+   the appliance:
+   - [ ] `/persistent/vakt-update/B/vmlinuz` and `initramfs.img` exist.
+   - [ ] `/persistent/etc/vakt-update-state.json` contains `tries_left: 3`.
+   - [ ] `/persistent/etc/vakt/bootenv` exists (`grub-editenv` isn't shipped
+         in the image, so eyeball it with `strings` or `cat -v`; it should
+         contain `vakt_active=B`).
+3. **Reboot and confirm slot B actually boots** - the first thing that has
+   never been tested for real:
+   - [ ] GRUB's menu (or its default, if the timeout is too short to see)
+         resolves to entry 2, "Vakt OS (update slot B)".
+   - [ ] The appliance boots into slot B's kernel/initramfs, not slot A's -
+         worth confirming a version marker differs if you built slot B from
+         changed sources.
+   - [ ] Boot reaches the panel normally.
+   - [ ] After boot, `/persistent/etc/vakt-update-state.json` is **gone**
+         (confirmed) rather than still present.
+4. **Reboot again** (a normal, successful reboot of the now-confirmed slot
+   B): confirm it boots slot B again, and stays confirmed - `vakt_active`
+   in the bootenv should still read `B`, and no state file should reappear.
+5. **Test the rollback path deliberately** - this is the one that matters
+   most and is hardest to exercise by accident:
+   - Build and apply a slot-B bundle that **cannot** reach readiness (e.g.
+     temporarily point it at a repository URL that doesn't exist, or break
+     one of the `DEFAULT_SERVICES` binaries in a throwaway build) and
+     reboot.
+   - [ ] The appliance attempts slot B, fails to confirm, and - within 3
+         boot attempts - vakt-init writes `vakt_active=A` and reboots on
+         its own, with no operator action.
+   - [ ] The next boot is slot A, and the appliance is otherwise unharmed
+         (panel comes up, `/persistent` data intact).
+   - [ ] `/persistent/etc/vakt-update-state.json` is gone after the
+         rollback.
+6. **Record exact behavior**, especially anything that *doesn't* match
+   [OS_UPDATES.md](OS_UPDATES.md)'s description - a GRUB version whose
+   `search`/`load_env` syntax works differently, a boot-attempt count that
+   turns out too aggressive or too lax, a race between vakt-init's rollback
+   write and GRUB reading it. This section only reflects design intent until
+   someone has actually done this once.
+
 ## Recording results
 
 There's no fixed template — a short note per machine (model, what passed,

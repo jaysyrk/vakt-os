@@ -50,9 +50,9 @@
   - [x] Replace the mocked sysctl check with real /proc/sys reads against the same list vakt-init hardens.
 - [x] **zrpkg-server Rate Limiting**
   - [x] Per-IP token bucket (-rate-limit/-rate-burst), rejecting with 429 before any file is touched.
-- [ ] **OS Image Update Mechanism** — deliberately deferred, see notes below.
-  - [ ] A way to update the base image (kernel, init, core tools) in the field, not just zrpkg packages.
-  - [ ] A/B partitions or another rollback path so a bad update cannot brick a deployed appliance.
+- [x] **OS Image Update Mechanism** — implemented, unvalidated on real hardware, see notes below.
+  - [x] A way to update the base image (kernel, init, core tools) in the field, not just zrpkg packages.
+  - [x] A/B rollback path so a bad update cannot brick a deployed appliance.
 - [ ] **Encrypted Wi-Fi Credentials at Rest** — decided against, see notes below.
   - [ ] Something stronger than root-only file permissions for the PSK in /persistent/etc/vakt-net.conf.
 - [x] **Fleet Observability**
@@ -149,15 +149,28 @@ parsing. The one box deliberately left unchecked is independent/third-party
 review, which by definition can't be done by the same person who wrote the
 code.
 
-**Why three items are still deferred, not silently dropped:**
+**OS image update mechanism: implemented, explicitly unvalidated.** Unlike
+the two items below, this one was attempted rather than deferred, on the
+user's explicit direction to do a best-effort implementation flagged clearly
+as unvalidated rather than leave it undesigned. It does not need a
+partition-layout redesign of the boot medium: slot A stays exactly what was
+`dd`'d to the USB, untouched and never at risk; slot B lands on the already-
+writable `/persistent`, the same trust boundary as an installed `zrpkg`
+package; GRUB picks between them by reading a variable off `/persistent`
+that only vakt-init and `vakt-update` write. Every part of this that can be
+verified without an actual reboot has been - the rollback decision logic is
+unit tested, the GRUB config passes `grub-script-check`, and CI genuinely
+builds a signed update bundle and runs `vakt-update apply` against a real
+local repository end to end. What isn't verified, and can't be without a
+reboot on real hardware or at minimum QEMU (neither available while this was
+built): whether GRUB actually boots slot B the way the config assumes, and
+whether the rollback actually recovers a machine stuck on a bad one. Full
+design, what's checked, and what isn't:
+[docs/OS_UPDATES.md](docs/OS_UPDATES.md). Test sequence for whoever validates
+it on real hardware: [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md#os-image-ab-updates).
 
-- **OS image update mechanism.** This needs A/B partitions or an equivalent
-  rollback path, which is a boot/partition-layout redesign - not something
-  to implement without the ability to actually boot-test a bad update and
-  confirm the rollback recovers, which this environment cannot do. Shipping
-  something untested here would be worse than leaving the gap documented:
-  a fake rollback path is more dangerous than no rollback path, because it
-  invites trust it hasn't earned.
+**Why the other two items are deferred, not silently dropped:**
+
 - **Encrypting the Wi-Fi PSK at rest.** Decided against, not just deferred.
   The appliance is designed to boot and connect to the network unattended,
   with no prompts - that's the whole point of
