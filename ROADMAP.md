@@ -53,7 +53,7 @@
 - [ ] **OS Image Update Mechanism** — deliberately deferred, see notes below.
   - [ ] A way to update the base image (kernel, init, core tools) in the field, not just zrpkg packages.
   - [ ] A/B partitions or another rollback path so a bad update cannot brick a deployed appliance.
-- [ ] **Encrypted Wi-Fi Credentials at Rest** — deliberately deferred, see notes below.
+- [ ] **Encrypted Wi-Fi Credentials at Rest** — decided against, see notes below.
   - [ ] Something stronger than root-only file permissions for the PSK in /persistent/etc/vakt-net.conf.
 - [x] **Fleet Observability**
   - [x] Ship logs, metrics or alerts off the device - useful for anyone running more than one appliance.
@@ -158,17 +158,20 @@ code.
   something untested here would be worse than leaving the gap documented:
   a fake rollback path is more dangerous than no rollback path, because it
   invites trust it hasn't earned.
-- **Encrypting the Wi-Fi PSK at rest.** The appliance is designed to boot and
-  connect to the network unattended, with no prompts - that's the whole
-  point of `/persistent/etc/vakt-net.conf` being readable at boot before
-  anyone is at the console. The only real secret available on the device,
-  the panel PIN, doesn't exist yet at that point in boot: it's entered later,
-  after the network already needed the PSK. Encrypting the PSK with anything
-  meaningfully stronger than root-only file permissions needs a key that's
-  available before boot-time network bring-up, and this appliance doesn't
-  have one - solving it well means either changing what "unattended boot"
-  means or introducing a hardware key store, both bigger decisions than a
-  quick pass on this line item should make unilaterally.
+- **Encrypting the Wi-Fi PSK at rest.** Decided against, not just deferred.
+  The appliance is designed to boot and connect to the network unattended,
+  with no prompts - that's the whole point of
+  `/persistent/etc/vakt-net.conf` being readable at boot before anyone is at
+  the console. The only real secret available on the device, the panel PIN,
+  doesn't exist yet at that point in boot: it's entered later, after the
+  network already needed the PSK. Any encryption scheme needs a key
+  available before boot-time network bring-up; the realistic option (a
+  TPM-sealed key, unsealed automatically at boot) adds a hardware dependency
+  and a new unseal-failure mode without changing the actual threat model -
+  physical console access already gets a root shell via `vakt.rootshell`,
+  the same trade-off this would be protecting against. Root-only file
+  permissions stay, and the reasoning is now explicit in the README's
+  Security model section rather than an unexplained gap.
 - **Real hardware validation.** CI proves the ISO builds and boots under
   QEMU. Physical NICs, Wi-Fi chipsets, storage controllers, and Secure Boot
   behavior can only be validated on real machines, which this environment

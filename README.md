@@ -50,6 +50,13 @@ GRUB → vmlinuz → initramfs → /init (vakt-init, Rust, PID 1)
   in Zig, no code shared with `zrpkg`, and the build fails if they disagree.
 - **Boot-time kernel hardening.** `vakt-init` applies hardening sysctls
   (`ptrace_scope`, `kptr_restrict`, `rp_filter`, etc.) at startup.
+- **Wi-Fi credentials are plaintext at rest, deliberately.** The PSK in
+  `/persistent/etc/vakt-net.conf` is protected by root-only file permissions,
+  not encryption — `vakt-net` needs it at boot, before the panel PIN (the
+  device's only real secret) exists, so no unattended-boot-compatible key is
+  available to encrypt it with. This is the same trade-off as
+  `vakt.rootshell`: physical console access already gets you root. See
+  [ROADMAP.md](ROADMAP.md) for the fuller reasoning.
 
 ## Building
 
