@@ -491,3 +491,12 @@ that ships with the compiler itself.
 
 **CI** — `actions/checkout`, `actions/cache`, `actions/upload-artifact`, and
 [`softprops/action-gh-release`](https://github.com/softprops/action-gh-release).
+
+## License
+
+Vakt OS is licensed under the [Apache License, Version 2.0](LICENSE). In
+short: you may use, modify, and redistribute this code, including
+commercially, as long as you keep the copyright and license notices (see
+[NOTICE](NOTICE)) and state what you changed — it may not be relicensed as
+someone else's unattributed work. The third-party components listed above
+keep their own licenses regardless of this project's license.

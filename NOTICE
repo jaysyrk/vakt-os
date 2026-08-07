@@ -1,0 +1,13 @@
+Vakt OS
+Copyright 2026 jaysyrk
+
+This product includes software developed as part of the Vakt OS project
+(https://github.com/jaysyrk/vakt-os).
+
+Redistributions of this software, or works derived from it, must preserve
+this notice and the accompanying LICENSE file, per the terms of the Apache
+License, Version 2.0.
+
+Third-party components carried in the built image or pulled in as
+dependencies keep their own licenses; see the "Third-party components"
+section of README.md for the full list and sources.
