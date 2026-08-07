@@ -60,6 +60,7 @@ jobs:
           cargo test --manifest-path pkg-manager/Cargo.toml
           cargo test --manifest-path vakt-init/Cargo.toml
           cargo test --manifest-path vakt-net/Cargo.toml
+          cargo test --manifest-path vakt-update/Cargo.toml
           cargo build --manifest-path vakt-compositor/Cargo.toml
 
       - name: Go vet and tests
@@ -74,6 +75,20 @@ jobs:
 
       - name: Shell scripts parse
         run: bash -n build.sh build-system/*.sh deploy/*.sh tools/vakt-backup tools/vakt-restore
+
+      - name: GRUB config syntax check
+        # build.sh's grub.cfg is unvalidated against a real GRUB boot as of
+        # this writing (see docs/OS_UPDATES.md) - this at least catches a
+        # syntax error automatically rather than only at manual review, by
+        # extracting the heredoc build.sh writes and running the same
+        # grub-script-check a real grub-mkrescue build would implicitly rely
+        # on getting right.
+        run: |
+          set -eu
+          pacman -S --needed --noconfirm grub
+          awk '/^cat > "\$ISO_DIR\/boot\/grub\/grub.cfg" <<.EOF.$/{flag=1;next}/^EOF$/{if(flag)exit}flag' \
+            build.sh > /tmp/grub-extract.cfg
+          grub-script-check /tmp/grub-extract.cfg
 
       - name: Backup and restore round trip
         run: |
@@ -234,6 +249,45 @@ jobs:
           VAKT_KERNEL: custom
         run: |
           SUDO_USER=root ./build.sh
+
+      - name: Build and apply an update bundle end to end
+        # The one piece of the A/B update mechanism (docs/OS_UPDATES.md) this
+        # environment can actually exercise for real: a genuine slot-B image
+        # build, a genuine signed bundle, a genuine repository serving it,
+        # and vakt-update really fetching/verifying/extracting it - the whole
+        # pipeline except the GRUB boot decision and vakt-init's rollback
+        # logic, which need an actual reboot to confirm and stay flagged
+        # unvalidated until that happens on real hardware.
+        env:
+          VAKT_KERNEL: custom
+        run: |
+          set -eu
+          echo "[+] Building the update bundle (VAKT_SLOT=B)..."
+          SUDO_USER=root ./build-system/mkupdate.sh ci-test-1.0
+
+          echo "[+] Building vakt-update..."
+          (cd vakt-update && cargo build --release)
+
+          echo "[+] Serving the repository locally..."
+          go build -C tools -buildvcs=false -o "$PWD/tools/bin/zrpkg-server" ./cmd/zrpkg-server/
+          "$PWD/tools/bin/zrpkg-server" -dir tools/repo -addr 127.0.0.1:8099 -quiet &
+          SERVER_PID=$!
+          trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+          sleep 1
+
+          mkdir -p /etc/vakt /persistent
+          cp build-system/keys/repo.pub /etc/vakt/trusted.key
+          export ZRPKG_REPO_URL=http://127.0.0.1:8099
+
+          ./vakt-update/target/release/vakt-update check
+          ./vakt-update/target/release/vakt-update apply
+
+          test -f /persistent/vakt-update/B/vmlinuz
+          test -f /persistent/vakt-update/B/initramfs.img
+          test "$(cat /persistent/vakt-update/B/version)" = "ci-test-1.0"
+          test -f /persistent/etc/vakt-update-state.json
+          grep -q "^vakt_active=B$" /persistent/etc/vakt/bootenv
+          echo "update bundle build+apply verified end to end"
 
       - name: Summarise the image
         run: |
