@@ -1,0 +1,45 @@
+#!/bin/sh
+# Backs up a directory (normally /persistent, on a running appliance) to a
+# checksummed tar.gz. POSIX sh, not bash: this ships in the image and runs
+# under busybox's ash, which is what /bin/sh is there.
+set -eu
+
+usage() {
+    echo "usage: vakt-backup <source-dir> <output.tar.gz>" >&2
+    echo "" >&2
+    echo "Writes <output.tar.gz> and <output.tar.gz>.sha256." >&2
+    exit 1
+}
+
+[ $# -eq 2 ] || usage
+src=$1
+out=$2
+
+if [ ! -d "$src" ]; then
+    echo "[!] $src is not a directory" >&2
+    exit 1
+fi
+
+mkdir -p "$(dirname "$out")"
+
+# Written under a temp name and renamed into place, so a backup that fails
+# partway (disk full, USB pulled) never leaves something at $out that looks
+# complete but is not.
+tmp="$out.tmp.$$"
+trap 'rm -f "$tmp"' EXIT INT TERM
+
+echo "[+] Archiving $src..."
+tar -C "$(dirname "$src")" -czf "$tmp" "$(basename "$src")"
+
+echo "[+] Checksumming..."
+checksum=$(sha256sum "$tmp" | awk '{print $1}')
+echo "$checksum  $(basename "$out")" > "$out.sha256"
+mv "$tmp" "$out"
+trap - EXIT INT TERM
+
+size=$(du -h "$out" | cut -f1)
+echo ""
+echo "========================================"
+echo "  Backup complete: $out ($size)"
+echo "  Checksum:         $out.sha256"
+echo "========================================"

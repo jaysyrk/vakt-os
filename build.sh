@@ -205,7 +205,7 @@ ln -sf /run/resolv.conf "$ROOTFS/etc/resolv.conf"
 ln -sf /proc/self/mounts "$ROOTFS/etc/mtab"
 
 # --- Vakt tools --------------------------------------------------------------
-echo "[+] Injecting zrpkg, vakt-audit, vakt-ids, vakt-panel, vakt-net, vakt-compositor, vakt-verify..."
+echo "[+] Injecting zrpkg, vakt-audit, vakt-ids, vakt-panel, vakt-net, vakt-compositor, vakt-verify, vakt-backup, vakt-restore..."
 copy_deps "$PROJECT_ROOT/pkg-manager/target/release/zrpkg" "$ROOTFS"
 copy_deps "$PROJECT_ROOT/tools/bin/vakt-audit" "$ROOTFS"
 copy_deps "$PROJECT_ROOT/tools/bin/vakt-ids" "$ROOTFS"
@@ -213,6 +213,9 @@ copy_deps "$PROJECT_ROOT/tools/bin/vakt-panel" "$ROOTFS"
 copy_deps "$PROJECT_ROOT/vakt-net/target/release/vakt-net" "$ROOTFS"
 copy_deps "$PROJECT_ROOT/vakt-compositor/target/release/vakt-compositor" "$ROOTFS"
 copy_deps "$PROJECT_ROOT/vakt-verify/zig-out/bin/vakt-verify" "$ROOTFS"
+cp "$PROJECT_ROOT/tools/vakt-backup" "$ROOTFS/usr/bin/vakt-backup"
+cp "$PROJECT_ROOT/tools/vakt-restore" "$ROOTFS/usr/bin/vakt-restore"
+chmod +x "$ROOTFS/usr/bin/vakt-backup" "$ROOTFS/usr/bin/vakt-restore"
 cp "$PROJECT_ROOT/build-system/fastfetch/vakt_logo.txt" "$ROOTFS/etc/vakt_logo.txt"
 
 # Trust anchor for zrpkg. Without it zrpkg refuses to install anything at all,
