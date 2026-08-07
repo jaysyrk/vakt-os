@@ -5,6 +5,7 @@
 //! the panel as an unprivileged user. It is also the only process that can shut
 //! the machine down cleanly, so it stays for the whole life of the system.
 
+mod envblock;
 mod logfile;
 mod mount;
 mod notify;
@@ -12,6 +13,7 @@ mod privilege;
 mod services;
 mod shutdown;
 mod sysctl;
+mod update;
 
 use notify::Listener;
 use privilege::Identity;
@@ -66,6 +68,13 @@ fn main() {
 
     println!("[Vakt-Init] Searching for persistent storage...");
     let persistent = mount::mount_persistent();
+
+    // Before anything else starts: if this is a vakt-update-staged slot B
+    // that has burned through its boot budget without confirming, this
+    // reboots straight back to slot A and never returns. See
+    // docs/OS_UPDATES.md - unvalidated on real boot hardware as of this
+    // writing.
+    update::check_and_handle(persistent);
 
     // Everything that has to write to the image itself has now happened.
     mount::seal_root();
@@ -154,6 +163,10 @@ fn main() {
             READY_TIMEOUT.as_secs()
         );
     }
+
+    // Boot has reached the point this system considers itself successful; if
+    // this is an unconfirmed slot-B update, it is accepted from here on.
+    update::confirm();
 
     console_loop(identity.as_ref(), persistent);
 }
