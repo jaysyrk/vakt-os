@@ -17,9 +17,8 @@ type bucket struct {
 	lastSeen time.Time
 }
 
-// rateLimiter is a per-IP token bucket. It exists to stop one client from
-// hammering the repository, not to shape traffic precisely, so a plain
-// fixed-rate refill - no fairness queue, no burst smoothing - is enough.
+// rateLimiter is a per-IP token bucket: each client IP gets its own bucket
+// that refills at a fixed rate up to a cap, and is denied once it runs dry.
 type rateLimiter struct {
 	mu      sync.Mutex
 	buckets map[string]*bucket
@@ -38,8 +37,7 @@ func newRateLimiter(rate, burst float64) *rateLimiter {
 }
 
 // allow reports whether a request from ip may proceed, consuming a token if
-// so. now is threaded through explicitly so refill and eviction are testable
-// without sleeping in the test.
+// so. now is the caller's clock reading, used for the refill math.
 func (rl *rateLimiter) allow(ip string, now time.Time) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
