@@ -39,8 +39,11 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 PROJECT_ROOT=$(pwd)
-ROOTFS="/tmp/vakt-rootfs"
-ISO_DIR="/tmp/vakt-iso"
+# mktemp -d rather than a fixed name: this runs as root, and a predictable
+# /tmp path a build-host user could pre-plant as a symlink before root gets
+# to it is a classic local privilege-escalation primitive.
+ROOTFS=$(mktemp -d /tmp/vakt-rootfs.XXXXXXXX)
+ISO_DIR=$(mktemp -d /tmp/vakt-iso.XXXXXXXX)
 OUT_ISO="$PROJECT_ROOT/vakt-os.iso"
 VAKT_KERNEL="${VAKT_KERNEL:-host}"
 # The QEMU host under user networking. Override to ship an image pointed at a
@@ -144,7 +147,6 @@ echo "[+] Building signed package repository..."
 echo ""
 echo "[Step 2/4] Constructing the rootfs"
 echo "----------------------------------------"
-rm -rf "$ROOTFS" "$ISO_DIR"
 # /tmp is where zrpkg stages downloads; /run holds pid, log, socket and status
 # files; /persistent is the mount point for the data disk. All three are mount
 # points for something writable, because the root itself is remounted read-only
@@ -293,8 +295,17 @@ echo ""
 echo "[Step 4/4] Packing the image"
 echo "----------------------------------------"
 echo "[+] Packing initramfs..."
-(cd "$ROOTFS" && find . -print0 | cpio --null -o --format=newc 2>/dev/null | gzip -1 > /tmp/vakt-initramfs.cpio.gz)
-cp /tmp/vakt-initramfs.cpio.gz "$ISO_DIR/boot/initramfs.img"
+# Fixed path (CI's summary step reads it directly), so unlike ROOTFS/ISO_DIR
+# this can't just move to mktemp -d - guard the write instead: refuse if the
+# path is a symlink rather than writing through it as root.
+INITRAMFS=/tmp/vakt-initramfs.cpio.gz
+if [ -L "$INITRAMFS" ]; then
+  echo "[!] Refusing to write through a symlink at $INITRAMFS"
+  exit 1
+fi
+rm -f "$INITRAMFS"
+(cd "$ROOTFS" && find . -print0 | cpio --null -o --format=newc 2>/dev/null | gzip -1 > "$INITRAMFS")
+cp "$INITRAMFS" "$ISO_DIR/boot/initramfs.img"
 
 # The data disk holds Wi-Fi credentials, installed packages and the IDS
 # baseline, so it must survive a rebuild. Delete it by hand to start fresh.

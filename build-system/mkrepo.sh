@@ -14,7 +14,11 @@ REPO_DIR="$PROJECT_ROOT/tools/repo"
 KEY_DIR="$PROJECT_ROOT/build-system/keys"
 KEY_FILE="$KEY_DIR/repo.key"
 PUB_FILE="$KEY_DIR/repo.pub"
-STAGE="/tmp/vakt-pkgstage"
+# mktemp -d rather than a fixed name: this stages the very files that are
+# about to be signed, and a predictable /tmp path a build-host user could
+# pre-plant as a symlink before this (typically root) script runs is a
+# classic local privilege-escalation primitive.
+STAGE=$(mktemp -d /tmp/vakt-pkgstage.XXXXXXXX)
 ZRPKG="$PROJECT_ROOT/pkg-manager/target/release/zrpkg"
 # Independent second opinion on every signature this script produces - see
 # vakt-verify/src/main.zig for why a from-scratch, separately-implemented
@@ -51,8 +55,7 @@ PACKAGES=(
     "vakt-verify|$PROJECT_ROOT/vakt-verify/zig-out/bin/vakt-verify|0.1.0|Independent Ed25519 package signature verifier.|"
 )
 
-rm -rf "$STAGE"
-mkdir -p "$STAGE" "$REPO_DIR"
+mkdir -p "$REPO_DIR"
 rm -f "$REPO_DIR"/*.zrp "$REPO_DIR"/*.json
 
 PUB_KEY=""

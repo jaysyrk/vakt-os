@@ -40,6 +40,16 @@ TARBALL="linux-$KERNEL_VERSION.tar.xz"
 URL="https://cdn.kernel.org/pub/linux/kernel/$SERIES/$TARBALL"
 TREE="$SRC_DIR/linux-$KERNEL_VERSION"
 
+# Unlike build.sh's other work directories, this one is a deliberate cache
+# kept at a fixed path across runs (CI restores/saves it by that exact path
+# via actions/cache) rather than a fresh mktemp -d each time, so it can't be
+# closed the same way - refuse instead if the path was pre-planted as a
+# symlink before this, typically root, script gets to it.
+if [ -L "$SRC_DIR" ]; then
+    echo "[!] Refusing to use $SRC_DIR: it is a symlink." >&2
+    exit 1
+fi
+
 echo "========================================"
 echo "     Vakt OS Kernel Builder             "
 echo "========================================"
