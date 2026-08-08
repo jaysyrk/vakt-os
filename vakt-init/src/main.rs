@@ -30,6 +30,11 @@ use std::time::Duration;
 /// reboot.
 const ZRPKG_ROOT: &str = "/persistent/zrpkg";
 
+/// vakt-net's config file. Kept in sync with vakt-net's own
+/// `config::PERSISTENT_CONF`; vakt-init creates it at boot so the daemon's
+/// Landlock ruleset has a path to name. See `privilege::grant_file`.
+const VAKT_NET_CONF: &str = "/persistent/etc/vakt-net.conf";
+
 /// PID 1's own PATH. Deliberately only the image's own directories: the package
 /// install root is writable by the unprivileged user, and anything reachable
 /// from there must never be a candidate for a program root runs.
@@ -97,6 +102,10 @@ fn main() {
             if persistent {
                 privilege::grant(Path::new(ZRPKG_ROOT), id);
                 privilege::grant(Path::new("/persistent/etc"), id);
+                // Created here, before vakt-net starts, so the daemon's
+                // Landlock ruleset can name a path that already exists - and
+                // owned by the panel's user, so the panel can rewrite it.
+                privilege::grant_file(Path::new(VAKT_NET_CONF), id);
             }
         }
         None => println!(

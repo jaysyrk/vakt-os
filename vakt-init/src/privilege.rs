@@ -8,6 +8,7 @@
 
 use nix::unistd::{Gid, Uid, chown, setgid, setgroups, setuid};
 use std::io;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 /// The unprivileged account the panel and everything it launches runs as.
@@ -116,6 +117,51 @@ pub fn grant(path: &Path, identity: &Identity) {
 /// `cttyhack` needs to open it to give the panel a controlling tty. `/dev/fb0`
 /// is here for the same reason - the compositor the panel launches writes to it
 /// directly.
+/// Creates `path` if it is missing and hands it to `identity`.
+///
+/// Unlike [`grant`], this is for a single file the unprivileged panel has to
+/// be able to rewrite in place. It exists so vakt-net's Landlock ruleset can
+/// name the Wi-Fi config path at startup even on an appliance that has never
+/// had Wi-Fi configured: Landlock cannot grant a rule for a path that does
+/// not exist, and a ruleset can never be widened afterward.
+///
+/// The file must be owned by the panel's user, not root, or the panel's
+/// write would fail with EACCES against a root-owned placeholder.
+pub fn grant_file(path: &Path, identity: &Identity) {
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        // 0600: this file holds the Wi-Fi PSK once the panel writes one.
+        if let Err(e) = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+        {
+            println!(
+                "[Vakt-Init] \x1b[1;33mCould not create {}: {}\x1b[0m",
+                path.display(),
+                e
+            );
+            return;
+        }
+    }
+
+    if let Err(e) = chown(
+        path,
+        Some(Uid::from_raw(identity.uid)),
+        Some(Gid::from_raw(identity.gid)),
+    ) {
+        println!(
+            "[Vakt-Init] \x1b[1;33mCould not give {} to {}: {}\x1b[0m",
+            path.display(),
+            identity.name,
+            e
+        );
+    }
+}
+
 pub fn grant_console(identity: &Identity) {
     const DEVICES: &[&str] = &[
         "/dev/console",
@@ -141,6 +187,43 @@ pub fn grant_console(identity: &Identity) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// grant_file exists so the panel can rewrite the Wi-Fi config in place.
+    /// A root-owned placeholder would make the panel's write fail with
+    /// EACCES, so the file it creates must be 0600 and must be handed to the
+    /// panel's user. The chown itself needs privileges this test suite does
+    /// not have, so what is pinned here is the part that always holds:
+    /// creation, mode, and that an existing file is never clobbered.
+    #[test]
+    fn grant_file_creates_a_private_file_without_clobbering_an_existing_one() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("vakt-init-grantfile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("etc").join("vakt-net.conf");
+
+        let identity = Identity {
+            name: "vakt".to_string(),
+            uid: nix::unistd::Uid::current().as_raw(),
+            gid: nix::unistd::Gid::current().as_raw(),
+            home: dir.join("home").to_string_lossy().into_owned(),
+        };
+
+        grant_file(&path, &identity);
+        assert!(path.is_file(), "grant_file should create a missing file");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the Wi-Fi config holds a PSK");
+
+        std::fs::write(&path, "ssid=Keep\n").unwrap();
+        grant_file(&path, &identity);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "ssid=Keep\n",
+            "an existing config must never be truncated"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     const SAMPLE: &str = "\
 # system accounts

@@ -69,10 +69,18 @@ impl NetConfig {
 }
 
 /// Returns the config file in use, preferring the persistent copy.
+///
+/// An empty file counts as absent, not as an empty configuration. That is
+/// what [`ensure_config_placeholder`] leaves behind so the Landlock ruleset
+/// can name the path, and treating it as a real config would both shadow the
+/// image-baked `FALLBACK_CONF` below it and rob the daemon of its
+/// "unconfigured" state - the panel would show a failing wired connection
+/// instead of "no network configured".
 pub fn config_path() -> Option<PathBuf> {
     for candidate in [PERSISTENT_CONF, FALLBACK_CONF] {
         let path = Path::new(candidate);
-        if path.is_file() {
+        let usable = std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() > 0);
+        if usable {
             return Some(path.to_path_buf());
         }
     }
@@ -188,5 +196,58 @@ mod tests {
     fn comments_and_blank_lines_are_ignored() {
         let cfg = NetConfig::parse("# comment\n\n  ssid = Cafe \n");
         assert_eq!(cfg.ssid.as_deref(), Some("Cafe"));
+    }
+
+    /// The placeholder ensure_config_placeholder() leaves behind must not be
+    /// mistaken for a real configuration: doing so would shadow the
+    /// image-baked fallback and destroy the daemon's "unconfigured" state.
+    /// Mirrors config_path's own precedence rule against a temp directory.
+    fn first_usable(candidates: &[&Path]) -> Option<std::path::PathBuf> {
+        candidates.iter().find_map(|path| {
+            let usable = std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() > 0);
+            usable.then(|| path.to_path_buf())
+        })
+    }
+
+    #[test]
+    fn an_empty_placeholder_does_not_shadow_the_fallback() {
+        let dir = scratch("shadow");
+        std::fs::create_dir_all(&dir).unwrap();
+        let persistent = dir.join("persistent.conf");
+        let fallback = dir.join("fallback.conf");
+        ensure_placeholder_at(&persistent);
+        std::fs::write(&fallback, "ssid=BakedIn\n").unwrap();
+
+        assert_eq!(
+            first_usable(&[&persistent, &fallback]),
+            Some(fallback.clone()),
+            "an empty persistent placeholder must fall through to the fallback"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_empty_placeholder_alone_still_counts_as_unconfigured() {
+        let dir = scratch("unconfigured");
+        std::fs::create_dir_all(&dir).unwrap();
+        let persistent = dir.join("persistent.conf");
+        let fallback = dir.join("absent.conf");
+        ensure_placeholder_at(&persistent);
+
+        assert_eq!(first_usable(&[&persistent, &fallback]), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_real_persistent_config_still_wins_over_the_fallback() {
+        let dir = scratch("precedence");
+        std::fs::create_dir_all(&dir).unwrap();
+        let persistent = dir.join("persistent.conf");
+        let fallback = dir.join("fallback.conf");
+        std::fs::write(&persistent, "ssid=OnDisk\n").unwrap();
+        std::fs::write(&fallback, "ssid=BakedIn\n").unwrap();
+
+        assert_eq!(first_usable(&[&persistent, &fallback]), Some(persistent));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

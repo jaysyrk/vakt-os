@@ -38,6 +38,15 @@ func writeNetConfig(ssid, psk, iface string) (string, error) {
 	b.WriteString(fmt.Sprintf("psk=%s\n", psk))
 	b.WriteString(fmt.Sprintf("interface=%s\n", iface))
 
+	// Deliberately a plain in-place write, not the write-temp-then-rename
+	// pattern used elsewhere in this codebase: vakt-net reaches this file
+	// through a Landlock rule, and Landlock rules are keyed on the inode
+	// that existed when the ruleset was created. A rename would put a new
+	// inode at this path, which the daemon's already-locked ruleset does not
+	// cover - Wi-Fi would silently stop working until the next reboot.
+	// vakt-init pre-creates this file owned by the panel's user
+	// (privilege::grant_file) so this truncating write succeeds in place.
+	//
 	// The PSK is in here, so keep it readable by root only.
 	return path, os.WriteFile(path, []byte(b.String()), 0600)
 }
