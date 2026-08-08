@@ -5,10 +5,31 @@ use memmap2::MmapMut;
 use std::fs::OpenOptions;
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
+use std::time::Duration;
 
 /// The device this program exists to draw on, and - once the sandbox is up -
 /// the only file it can reach.
 const FRAMEBUFFER: &str = "/dev/fb0";
+
+/// sandbox::confine() can only grant a Landlock rule for a path that exists
+/// at the moment the ruleset locks in, and the ruleset can never be widened
+/// afterward - so if the framebuffer driver is a loadable module that hasn't
+/// finished probing yet, confining before it appears would permanently deny
+/// this process the one device it exists to draw on. A short wait here costs
+/// nothing in the ordinary case (the device already exists, so the loop exits
+/// on its first check).
+fn wait_for_framebuffer() {
+    const ATTEMPTS: u32 = 10;
+    const DELAY: Duration = Duration::from_millis(100);
+    for attempt in 0..ATTEMPTS {
+        if Path::new(FRAMEBUFFER).exists() {
+            return;
+        }
+        if attempt + 1 < ATTEMPTS {
+            std::thread::sleep(DELAY);
+        }
+    }
+}
 
 const FBIOGET_VSCREENINFO: libc::c_ulong = 0x4600;
 const FBIOGET_FSCREENINFO: libc::c_ulong = 0x4602;
@@ -73,6 +94,8 @@ struct FbFixScreenInfo {
 }
 
 fn main() {
+    wait_for_framebuffer();
+
     match sandbox::confine(Path::new(FRAMEBUFFER)) {
         Ok(report) => println!("[Vakt-Compositor] {}", report),
         Err(e) => println!(
