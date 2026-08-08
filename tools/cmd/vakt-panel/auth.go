@@ -52,10 +52,19 @@ func setPINAt(path, pin string) error {
 	}
 
 	body := hex.EncodeToString(salt) + ":" + hashPIN(pin, salt) + "\n"
+	// Written under a temp name and renamed into place, so a write
+	// interrupted by power loss can never leave a corrupt-but-existing file
+	// at path: hasPINAt only checks the file exists, and a corrupt file
+	// there permanently locks the console out - verifyPINAt fails safe for
+	// every candidate PIN, correct or not.
+	tmp := path + ".tmp"
 	// Root-only: this file exists to deny the console to whoever does not
 	// know the PIN, so it must not be readable by the account it is
 	// protecting the panel from.
-	return os.WriteFile(path, []byte(body), 0600)
+	if err := os.WriteFile(tmp, []byte(body), 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // verifyPINAt checks a candidate PIN against the stored hash in constant

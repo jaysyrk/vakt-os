@@ -88,6 +88,16 @@ func TestRemovePIN(t *testing.T) {
 	}
 }
 
+func TestSetPINLeavesNoTempFileBehind(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vakt-panel.auth")
+	if err := setPINAt(path, "1234"); err != nil {
+		t.Fatalf("setPINAt: %v", err)
+	}
+	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf("a temp file was left behind: %v", err)
+	}
+}
+
 func TestMalformedStoredPINDoesNotVerify(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vakt-panel.auth")
 	if err := os.WriteFile(path, []byte("not-the-expected-format"), 0600); err != nil {
