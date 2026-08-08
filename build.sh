@@ -144,7 +144,7 @@ done)
 # vakt-verify: an independent, from-scratch signature check, written in Zig
 # against only its standard library - no code shared with zrpkg's own (Rust)
 # verifier. See vakt-verify/src/main.zig for why that independence matters.
-(cd "$PROJECT_ROOT/vakt-verify"      && build_as_user zig build -Doptimize=ReleaseSmall)
+(cd "$PROJECT_ROOT/vakt-verify"      && build_as_user zig build -Doptimize=ReleaseSafe)
 
 echo ""
 echo "[+] Building signed package repository..."

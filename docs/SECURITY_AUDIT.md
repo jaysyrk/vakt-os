@@ -86,7 +86,31 @@ the code, not that the code has been exhaustively fuzzed. Worth running each
 for longer (hours, not seconds) periodically, and especially after touching
 any of the three functions above.
 
-No equivalent exists yet for `vakt-verify` (Zig) — Zig's own fuzzing support
+## Finding: the independent verifier shipped without safety checks
+
+`vakt-verify` was built with `zig build -Doptimize=ReleaseSmall`. In Zig,
+`ReleaseSmall` and `ReleaseFast` **disable runtime safety checks**; only
+`Debug` and `ReleaseSafe` keep them. Confirmed rather than assumed - the same
+out-of-bounds read panics under `ReleaseSafe` and silently returns adjacent
+memory under `ReleaseSmall`, exiting 0.
+
+That is the wrong trade for this binary specifically. Its entire job is to be
+a *trustworthy second opinion* on attacker-supplied bytes: manifest JSON, hex
+strings, and whole archives fetched off the network. A verifier whose own
+bounds checks are compiled out is a weaker second opinion than its presence
+implies, and it runs rarely enough (build-time re-verification, occasional
+manual use) that speed and size barely matter.
+
+**Fixed** by building `ReleaseSafe` and stripping debug info in `build.zig`.
+Stripping is what makes this nearly free: unstripped `ReleaseSafe` is 4.2MB
+against `ReleaseSmall`'s 229KB, but stripped it is 460KB - about 231KB for
+restored bounds and overflow checking. The panic message a safety check
+produces is a runtime string and still prints; only the stack trace loses its
+symbols. Verified afterwards end to end against real `zrpkg`-signed packages:
+a valid signature passes, a tampered archive fails, and a malformed manifest
+is a clean error rather than a crash.
+
+No fuzzing equivalent exists yet for `vakt-verify` (Zig) — Zig's own fuzzing support
 is newer and less established than `cargo-fuzz`'s libFuzzer integration, and
 setting it up properly is worth its own pass rather than a rushed addition
 here. `vakt-verify`'s hex/JSON parsing is the other place untrusted,

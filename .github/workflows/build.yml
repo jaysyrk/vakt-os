@@ -119,7 +119,7 @@ jobs:
           set -eu
           cargo build --release --manifest-path pkg-manager/Cargo.toml
           go build -C tools -buildvcs=false -o "$PWD/tools/bin/zrpkg-server" ./cmd/zrpkg-server/
-          (cd vakt-verify && zig build -Doptimize=ReleaseSmall)
+          (cd vakt-verify && zig build -Doptimize=ReleaseSafe)
           ZRPKG="$PWD/pkg-manager/target/release/zrpkg"
           VAKT_VERIFY="$PWD/vakt-verify/zig-out/bin/vakt-verify"
           WORK=$(mktemp -d)
