@@ -37,10 +37,17 @@ fi
 
 # --- Signing key -------------------------------------------------------------
 mkdir -p "$KEY_DIR"
+# The directory too, not just the key inside it: this is the one secret in
+# the project whose loss means an attacker can sign packages every appliance
+# already trusts.
+chmod 700 "$KEY_DIR"
 if [ ! -f "$KEY_FILE" ]; then
     echo "[+] Generating repository signing key..."
-    openssl rand -hex 32 > "$KEY_FILE"
-    chmod 600 "$KEY_FILE"
+    # Written under a restrictive umask in a subshell rather than chmod'd
+    # afterwards. A plain redirect creates the file 0644, so the private key
+    # would sit world-readable on the build machine for the instant between
+    # the redirect and the chmod.
+    (umask 077 && openssl rand -hex 32 > "$KEY_FILE")
 fi
 PRIV_KEY=$(cat "$KEY_FILE")
 
