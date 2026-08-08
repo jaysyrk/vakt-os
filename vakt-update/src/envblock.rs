@@ -1,19 +1,7 @@
-//! Reads and writes a GRUB environment block: the fixed-size file format
-//! `grub-editenv`/`load_env`/`save_env` use, so GRUB can read a variable this
-//! process wrote without either side running the other's code.
-//!
-//! Format, from GRUB's own `lib/envblk.c`: a signature line, then `key=value`
-//! lines, then the rest of a fixed-size block padded with `#`. This is
-//! reimplemented from the documented format rather than shipping
-//! `grub-editenv` itself, matching this project's "write the fifty lines"
-//! approach - and because pulling a GRUB utility binary into the read-only
-//! initramfs for one file format is a heavier dependency than the format
-//! warrants.
-//!
-//! UNVALIDATED against a real GRUB build as of this writing - the signature
-//! and padding behavior below match GRUB's documented source, but no actual
-//! `grub` binary has read a block this code wrote. See
-//! docs/OS_UPDATES.md.
+//! Reads and writes a GRUB environment block (see GRUB's `lib/envblk.c`): a
+//! signature line, `key=value` lines, then `#` padding to a fixed size.
+//! Reimplemented rather than shipping `grub-editenv`. Unvalidated against a
+//! real GRUB build - see docs/OS_UPDATES.md.
 
 use anyhow::{Context, Result, bail};
 use std::collections::BTreeMap;
@@ -24,9 +12,7 @@ use std::path::Path;
 const SIGNATURE: &[u8] = b"# GRUB Environment Block\n";
 const BLOCK_SIZE: usize = 1024;
 
-/// Writes `entries` to `path` as a GRUB environment block, atomically (via a
-/// temp file and rename) so a failed write can never leave GRUB reading a
-/// half-written block.
+/// Writes `entries` as a GRUB environment block, atomically.
 pub fn write(path: &Path, entries: &[(&str, &str)]) -> Result<()> {
     let mut buf = Vec::with_capacity(BLOCK_SIZE);
     buf.extend_from_slice(SIGNATURE);
@@ -61,9 +47,6 @@ pub fn write(path: &Path, entries: &[(&str, &str)]) -> Result<()> {
 }
 
 /// Reads back the entries in a GRUB environment block written by [`write`].
-/// Not used by the update flow itself (GRUB is the real reader), but exists
-/// so the format round-trips under test rather than being verified only by
-/// eye.
 pub fn read(path: &Path) -> Result<BTreeMap<String, String>> {
     let data = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     if !data.starts_with(SIGNATURE) {
@@ -77,8 +60,6 @@ pub fn read(path: &Path) -> Result<BTreeMap<String, String>> {
 
     let mut entries = BTreeMap::new();
     for line in text.lines() {
-        // Padding is a run of '#'; a real entry never starts with one since
-        // '#' isn't a valid key character in anything this code writes.
         if line.starts_with('#') {
             break;
         }

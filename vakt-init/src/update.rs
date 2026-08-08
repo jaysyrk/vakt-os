@@ -1,14 +1,7 @@
 //! Decides whether the slot vakt-init just booted into should be trusted, and
 //! rolls back to slot A if a `vakt-update`-staged slot B has burned through
-//! its boot budget without reaching readiness.
-//!
-//! UNVALIDATED ON REAL BOOT HARDWARE as of this writing - see
-//! docs/OS_UPDATES.md. The decision logic in [`next`] below is unit tested
-//! and does not touch a filesystem or GRUB at all, which is the part that
-//! can be verified here. What can't be verified here: whether GRUB actually
-//! reads `/persistent/etc/vakt/bootenv` the way [`envblock`] assumes, and
-//! whether a slot-B initramfs actually carries the right `/etc/vakt-slot`
-//! value - both need a real reboot into a real slot B to confirm.
+//! its boot budget without reaching readiness. Unvalidated on real boot
+//! hardware - see docs/OS_UPDATES.md.
 
 use crate::envblock;
 use serde::{Deserialize, Serialize};
@@ -24,20 +17,14 @@ struct UpdateState {
     tries_left: u32,
 }
 
-/// What [`next`] decided should happen to the on-disk state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Outcome {
-    /// Slot A, or no pending update: nothing to do.
     NotApplicable,
-    /// Slot B still has attempts left; save the new count and keep booting.
     Decrement(u32),
-    /// Slot B ran out of attempts without confirming; fall back to slot A.
     RollBack,
 }
 
-/// Pure decision logic, kept separate from real files so it is testable
-/// without mounting anything: given the slot currently running and however
-/// many boot attempts slot B has left, what should this boot do.
+/// Pure decision logic, testable without touching the filesystem.
 fn next(slot: &str, tries_left: Option<u32>) -> Outcome {
     if slot != "B" {
         return Outcome::NotApplicable;
@@ -53,8 +40,6 @@ fn current_slot() -> String {
     current_slot_from(SLOT_FILE)
 }
 
-/// Split out from [`current_slot`] so the missing-file/empty-file fallback is
-/// testable without touching `/etc/vakt-slot`.
 fn current_slot_from(path: &str) -> String {
     fs::read_to_string(path)
         .ok()
@@ -76,11 +61,8 @@ fn save_tries_left(tries_left: u32) {
 }
 
 /// Called once, early in boot, right after `/persistent` is mounted and
-/// before any service starts. If this rolls back, it does not return - it
-/// writes `vakt_active=A` and reboots straight into slot A. Nothing has
-/// started yet at this point, so there is no supervisor to stop first; a
-/// direct `reboot(2)` is the right tool, not the graceful shutdown sequence
-/// that exists for stopping a running system.
+/// before any service starts. A rollback does not return - reboots straight
+/// into slot A.
 pub fn check_and_handle(persistent_mounted: bool) {
     if !persistent_mounted {
         return;
@@ -88,10 +70,6 @@ pub fn check_and_handle(persistent_mounted: bool) {
 
     let slot = current_slot();
 
-    // Diagnostic only: if GRUB's own idea of the active slot disagrees with
-    // what this boot's initramfs claims to be, that is a sign something
-    // about the update/rollback wiring is wrong, and worth seeing in the
-    // boot log even though nothing here acts on it directly.
     if let Ok(entries) = envblock::read(Path::new(BOOTENV_PATH)) {
         if let Some(active) = entries.get("vakt_active") {
             if active != &slot {
@@ -121,8 +99,6 @@ pub fn check_and_handle(persistent_mounted: bool) {
             }
             let _ = fs::remove_file(STATE_PATH);
             let _ = nix::sys::reboot::reboot(nix::sys::reboot::RebootMode::RB_AUTOBOOT);
-            // reboot(2) only returns on failure; returning from here would let
-            // boot continue on a slot this function just decided not to trust.
             loop {
                 std::thread::park();
             }
@@ -130,10 +106,8 @@ pub fn check_and_handle(persistent_mounted: bool) {
     }
 }
 
-/// Called once boot reaches the point it considers itself successful (the
-/// same point that decides whether to draw the panel). If this is slot B
-/// with a pending update, marks it accepted - future boots into this slot
-/// never roll it back again, until the next update replaces it.
+/// Called once boot considers itself successful. Marks a pending slot-B
+/// update accepted.
 pub fn confirm() {
     if current_slot() == "B" && Path::new(STATE_PATH).exists() {
         let _ = fs::remove_file(STATE_PATH);
@@ -154,8 +128,6 @@ mod tests {
 
     #[test]
     fn slot_b_with_no_state_file_is_left_alone() {
-        // A confirmed update deletes its state file; a later reboot into that
-        // same accepted slot B must not be treated as still-pending.
         assert_eq!(next("B", None), Outcome::NotApplicable);
     }
 
@@ -180,9 +152,6 @@ mod tests {
 
     #[test]
     fn current_slot_defaults_to_a_when_the_file_is_missing() {
-        // Ambiguity must fall back to the safe direction: if this process
-        // somehow can't tell which slot it's running, assume the one that is
-        // never written to by an update.
         let dir = scratch("missing");
         let path = dir.join("does-not-exist");
 

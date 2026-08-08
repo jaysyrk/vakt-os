@@ -77,12 +77,6 @@ jobs:
         run: bash -n build.sh build-system/*.sh deploy/*.sh tools/vakt-backup tools/vakt-restore
 
       - name: GRUB config syntax check
-        # build.sh's grub.cfg is unvalidated against a real GRUB boot as of
-        # this writing (see docs/OS_UPDATES.md) - this at least catches a
-        # syntax error automatically rather than only at manual review, by
-        # extracting the heredoc build.sh writes and running the same
-        # grub-script-check a real grub-mkrescue build would implicitly rely
-        # on getting right.
         run: |
           set -eu
           pacman -S --needed --noconfirm grub
@@ -251,13 +245,6 @@ jobs:
           SUDO_USER=root ./build.sh
 
       - name: Build and apply an update bundle end to end
-        # The one piece of the A/B update mechanism (docs/OS_UPDATES.md) this
-        # environment can actually exercise for real: a genuine slot-B image
-        # build, a genuine signed bundle, a genuine repository serving it,
-        # and vakt-update really fetching/verifying/extracting it - the whole
-        # pipeline except the GRUB boot decision and vakt-init's rollback
-        # logic, which need an actual reboot to confirm and stay flagged
-        # unvalidated until that happens on real hardware.
         env:
           VAKT_KERNEL: custom
         run: |

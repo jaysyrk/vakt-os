@@ -30,24 +30,15 @@ const (
 	// package archive never stalls a scan.
 	maxHashBytes = 32 << 20
 	// The alert file is trimmed to this many lines when it grows past it.
-	maxAlertLines = 1000
-	// webhookTimeout bounds how long a single alert delivery can block the
-	// daemon; a slow or unreachable webhook endpoint must never stall scanning.
+	maxAlertLines  = 1000
 	webhookTimeout = 5 * time.Second
 )
 
-// webhookConfigPath holds the webhook URL for appliances where vakt-ids runs
-// under vakt-init's supervisor, whose service arguments are a fixed Rust
-// const array (see vakt-init/src/services.rs) and can't carry a per-appliance
-// flag value. A one-line config file, read only when -webhook wasn't passed,
-// mirrors how vakt-net reads /persistent/etc/vakt-net.conf for the same
-// reason: operator-settable without rebuilding vakt-init.
+// Config fallback for the fixed vakt-init service args - see
+// vakt-init/src/services.rs.
 const webhookConfigPath = "/persistent/etc/vakt-ids-webhook.conf"
 
-// webhookURL is set once in main(), from the -webhook flag or, failing that,
-// webhookConfigPath. Empty means disabled, which is the default: this is for
-// anyone running more than one appliance and wanting a fleet-wide feed, not
-// something every install needs.
+// webhookURL is set once in main(). Empty means disabled (the default).
 var webhookURL string
 
 var webhookClient = &http.Client{Timeout: webhookTimeout}
@@ -332,9 +323,6 @@ func alert(kind, detail string) {
 	}
 }
 
-// loadWebhookURLFrom resolves the webhook URL: an explicit flag value wins,
-// otherwise it falls back to the first line of configPath if that file
-// exists and is non-empty, otherwise webhooks stay disabled.
 func loadWebhookURLFrom(flagValue, configPath string) string {
 	if flagValue != "" {
 		return flagValue
@@ -346,18 +334,13 @@ func loadWebhookURLFrom(flagValue, configPath string) string {
 	return strings.TrimSpace(strings.SplitN(string(data), "\n", 2)[0])
 }
 
-// sendWebhook posts an alert to webhookURL using the package's real HTTP
-// client. Best-effort: a delivery failure is logged, never fatal, and never
-// retried — the alert file is already the durable record.
+// Best-effort: a delivery failure is logged, never fatal.
 func sendWebhook(kind, detail string) {
 	if err := sendWebhookTo(webhookClient, webhookURL, kind, detail); err != nil {
 		log.Printf("Warning: webhook delivery failed: %v", err)
 	}
 }
 
-// sendWebhookTo does the actual POST, taking the client and URL as arguments
-// so it can be tested against an httptest.Server without touching the
-// package-level webhookURL/webhookClient.
 func sendWebhookTo(client *http.Client, url, kind, detail string) error {
 	host, err := os.Hostname()
 	if err != nil {

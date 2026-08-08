@@ -49,14 +49,10 @@ VAKT_KERNEL="${VAKT_KERNEL:-host}"
 # The QEMU host under user networking. Override to ship an image pointed at a
 # repository on a server you run.
 VAKT_REPO_URL="${VAKT_REPO_URL:-http://10.0.2.2:8080}"
-# "A" for an ordinary image build. build-system/mkupdate.sh sets this to "B"
-# to build the same image for the A/B update mechanism instead - see
-# docs/OS_UPDATES.md. Nothing about this changes for a normal ./build.sh run.
+# A/B update mechanism (docs/OS_UPDATES.md) - set by mkupdate.sh, not by hand.
 VAKT_SLOT="${VAKT_SLOT:-A}"
-# When set, the build stops right after packing vmlinuz/initramfs.img - no
-# ISO, no data disk - and copies just those two files here instead. That is
-# all an update bundle needs; mkupdate.sh sets this so a slot-B build does not
-# also do the (irrelevant, wasted) work of producing a bootable ISO.
+# When set, stop after packing vmlinuz/initramfs.img and copy them here
+# instead of building an ISO/data disk.
 VAKT_UPDATE_OUT="${VAKT_UPDATE_OUT:-}"
 
 # The unprivileged account the panel runs as. vakt-init drops to it before
@@ -229,9 +225,7 @@ cp "$PROJECT_ROOT/tools/vakt-restore" "$ROOTFS/usr/bin/vakt-restore"
 chmod +x "$ROOTFS/usr/bin/vakt-backup" "$ROOTFS/usr/bin/vakt-restore"
 cp "$PROJECT_ROOT/build-system/fastfetch/vakt_logo.txt" "$ROOTFS/etc/vakt_logo.txt"
 
-# Marks which A/B slot this image identifies itself as at boot - see
-# vakt-init/src/update.rs and docs/OS_UPDATES.md. Always "A" for a normal
-# build; only build-system/mkupdate.sh sets VAKT_SLOT=B.
+# A/B slot marker - see vakt-init/src/update.rs.
 echo "$VAKT_SLOT" > "$ROOTFS/etc/vakt-slot"
 
 # Trust anchor for zrpkg. Without it zrpkg refuses to install anything at all,
@@ -327,8 +321,6 @@ rm -f "$INITRAMFS"
 cp "$INITRAMFS" "$ISO_DIR/boot/initramfs.img"
 
 if [ -n "$VAKT_UPDATE_OUT" ]; then
-    # An update bundle needs exactly these two files, not a bootable ISO or a
-    # data disk - both irrelevant to what vakt-update ships.
     mkdir -p "$VAKT_UPDATE_OUT"
     cp "$ISO_DIR/boot/vmlinuz" "$VAKT_UPDATE_OUT/vmlinuz"
     cp "$INITRAMFS" "$VAKT_UPDATE_OUT/initramfs.img"
@@ -344,10 +336,7 @@ if [ -f "$PROJECT_ROOT/vakt-data.img" ]; then
 else
     echo "[+] Generating persistent data disk (vakt-data.img)..."
     dd if=/dev/zero of="$PROJECT_ROOT/vakt-data.img" bs=1M count=256 2>/dev/null
-    # Labeled so GRUB can find it by --label rather than a Linux device name
-    # GRUB does not use (see the search command in grub.cfg below, and
-    # docs/OS_UPDATES.md) - needed for vakt-update to hand a staged slot B
-    # to GRUB without going through vakt-init at all.
+    # Labeled so GRUB can find it by --label (see grub.cfg below).
     mkfs.ext4 -F -L VAKTDATA "$PROJECT_ROOT/vakt-data.img" >/dev/null
     chown "${SUDO_USER:-root}:${SUDO_USER:-root}" "$PROJECT_ROOT/vakt-data.img"
 fi
@@ -358,33 +347,19 @@ fi
 # vakt-compositor silently do nothing. Add `vakt.rootshell` here to get a root
 # recovery shell when the panel exits.
 #
-# Entries 0 and 1 (this image's own kernel/initramfs, "slot A") are never
-# touched by an update - they are the ISO/USB exactly as built, and are what
-# every rollback falls back to. Entry 2 boots a `vakt-update`-staged "slot B"
-# living on the persistent data disk instead, if `vakt-update apply` has
-# activated one; `default` is computed from the same GRUB environment block
-# vakt-init reads and writes for its own rollback decision (see
-# vakt-init/src/update.rs and docs/OS_UPDATES.md), so both sides agree on
-# which slot is active without either one driving the other.
-#
-# UNVALIDATED against a real GRUB build as of this writing - `search`,
-# `load_env`, and the conditional `default` below are standard GRUB script,
-# but none of it has been exercised against an actual grub binary. See
-# docs/OS_UPDATES.md and docs/HARDWARE_VALIDATION.md before trusting this on
-# real hardware.
+# Entries 0/1 are this image's own kernel/initramfs ("slot A"), never touched
+# by an update. Entry 2 boots a vakt-update-staged "slot B" on the persistent
+# disk if active. See vakt-init/src/update.rs and docs/OS_UPDATES.md -
+# unvalidated against a real GRUB build as of this writing.
 cat > "$ISO_DIR/boot/grub/grub.cfg" <<'EOF'
 set timeout=1
 set default=0
 
-# Finds the persistent data disk by filesystem label, since GRUB's device
-# names do not match the kernel's (/dev/sda etc.). Left unset (not fatal) if
-# the disk is not labeled VAKTDATA or is not present at boot time - a fresh
-# appliance with no data disk yet still boots slot A normally.
+# Finds the persistent disk by filesystem label (GRUB doesn't use Linux
+# device names). Left unset, not fatal, if not found.
 search --no-floppy --label VAKTDATA --set=vakt_data
 
 if [ -n "$vakt_data" ]; then
-    # No-op if the file does not exist yet (nothing has ever run
-    # `vakt-update apply` on this appliance), leaving $vakt_active unset.
     load_env -f ($vakt_data)/etc/vakt/bootenv
 fi
 

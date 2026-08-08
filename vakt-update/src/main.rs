@@ -1,17 +1,8 @@
 //! vakt-update fetches, verifies, and stages an OS image update onto
 //! `/persistent`, alongside the running system rather than in place of it.
-//!
-//! UNVALIDATED ON REAL HARDWARE as of this writing - see
-//! docs/OS_UPDATES.md for exactly what that means and what still needs a
-//! real boot to confirm. Run only on hardware you can recover by hand
-//! (`vakt.rootshell`) if something here is wrong.
-//!
-//! Reuses zrpkg's own download, signature verification, and archive-safety
-//! code (`zrpkg::fetch`, `zrpkg::remove::safe_relative`, `zrpkg::manifest`,
-//! `zrpkg::config`) rather than a second implementation of any of it - an
-//! update bundle is fetched, verified, and unpacked exactly like a package
-//! is, and is built with the ordinary `zrpkg pack` command
-//! (see build-system/mkupdate.sh).
+//! Unvalidated on real hardware - see docs/OS_UPDATES.md. Reuses zrpkg's
+//! download/verify/archive-safety code rather than a second implementation
+//! of any of it; built with `zrpkg pack` (see build-system/mkupdate.sh).
 
 mod envblock;
 
@@ -24,25 +15,16 @@ use zrpkg::fetch::{download_package, verify_signature};
 use zrpkg::manifest::PackageManifest;
 use zrpkg::remove::safe_relative;
 
-/// Same trust anchor `zrpkg` verifies packages against - an update is not a
-/// different trust decision from a package, just a different payload.
 const TRUSTED_KEY_PATH: &str = "/etc/vakt/trusted.key";
-
-/// Where zrpkg publishes are looked for; an update bundle lives beside the
-/// ordinary packages in the same repository.
 const BUNDLE_NAME: &str = "vakt-update";
 
-/// The inactive slot every update lands in. Slot A is the image that was
-/// installed from the boot medium and is never written to; there is
-/// deliberately no "slot A update" path.
 const SLOT_B_DIR: &str = "/persistent/vakt-update/B";
 const STAGING_DIR: &str = "/persistent/vakt-update/.staging-B";
 const VERSION_FILE: &str = "version";
 
 const BOOTENV_PATH: &str = "/persistent/etc/vakt/bootenv";
 const STATE_PATH: &str = "/persistent/etc/vakt-update-state.json";
-/// Boot attempts slot B gets to reach readiness before vakt-init rolls back
-/// to slot A on its own. Keep in sync with vakt-init/src/update.rs.
+/// Keep in sync with vakt-init/src/update.rs.
 const MAX_BOOT_ATTEMPTS: u32 = 3;
 
 fn main() {
@@ -136,9 +118,6 @@ fn apply(reboot: bool) -> Result<()> {
     }
     std::fs::write(Path::new(STAGING_DIR).join(VERSION_FILE), &manifest.version)?;
 
-    // Swap the staged slot into place only after everything above succeeded,
-    // so a failure partway through never leaves slot B half-written while
-    // still being what GRUB would boot.
     let _ = std::fs::remove_dir_all(SLOT_B_DIR);
     std::fs::rename(STAGING_DIR, SLOT_B_DIR).context("activating the staged slot")?;
 
@@ -182,11 +161,8 @@ async fn fetch_manifest(repo_url: &str) -> Result<PackageManifest> {
     PackageManifest::parse(&text).context("parsing the update manifest")
 }
 
-/// Extracts `archive_path` into `target`, rejecting any entry
-/// `safe_relative` would reject - the exact check `zrpkg install` uses, so a
-/// malicious or corrupt update bundle can't write outside the staging
-/// directory any more than a malicious package could write outside an
-/// install root.
+/// Extracts `archive_path` into `target`, rejecting any entry `safe_relative`
+/// would reject.
 fn unpack_safely(archive_path: &Path, target: &Path) -> Result<()> {
     let file = File::open(archive_path).context("opening the downloaded bundle")?;
     let mut archive = Archive::new(GzDecoder::new(file));

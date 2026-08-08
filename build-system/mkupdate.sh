@@ -4,23 +4,10 @@ set -euo pipefail
 # ==============================================================================
 # Vakt OS - Update Bundle Builder
 # ==============================================================================
-# Builds slot B for the A/B update mechanism: the exact same image build.sh
-# produces for slot A, marked /etc/vakt-slot=B, packaged as a signed
-# zrpkg-style bundle (vakt-update.zrp/.json) instead of an ISO.
-#
-# Reuses build.sh entirely for the rootfs/kernel/initramfs assembly rather
-# than a second implementation of it - VAKT_SLOT=B and VAKT_UPDATE_OUT are
-# the only difference from an ordinary build.sh run. Signs with the same
-# build-system/keys/repo.key mkrepo.sh uses, so the appliance's existing
-# trust anchor (/etc/vakt/trusted.key) verifies it with no separate key
-# management for updates.
-#
-# UNVALIDATED ON REAL HARDWARE as of this writing - see docs/OS_UPDATES.md.
+# Builds and signs slot B for the A/B update mechanism (docs/OS_UPDATES.md),
+# reusing build.sh for the actual image build. Unvalidated on real hardware.
 #
 #   sudo ./build-system/mkupdate.sh [version]
-#
-# VAKT_KERNEL is honored the same as build.sh; VAKT_SLOT and VAKT_UPDATE_OUT
-# are set by this script and should not be overridden.
 # ==============================================================================
 
 if [ "$EUID" -ne 0 ]; then
@@ -32,8 +19,6 @@ PROJECT_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 KEY_FILE="$PROJECT_ROOT/build-system/keys/repo.key"
 REPO_DIR="$PROJECT_ROOT/tools/repo"
 ZRPKG="$PROJECT_ROOT/pkg-manager/target/release/zrpkg"
-# mktemp -d rather than a fixed name for the same reason build.sh and
-# mkrepo.sh do: this stages files about to be signed, as root.
 STAGE=$(mktemp -d /tmp/vakt-updatestage.XXXXXXXX)
 VERSION="${1:-$(date -u +%Y%m%d%H%M%S)}"
 

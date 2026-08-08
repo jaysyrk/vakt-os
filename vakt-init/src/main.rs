@@ -69,11 +69,7 @@ fn main() {
     println!("[Vakt-Init] Searching for persistent storage...");
     let persistent = mount::mount_persistent();
 
-    // Before anything else starts: if this is a vakt-update-staged slot B
-    // that has burned through its boot budget without confirming, this
-    // reboots straight back to slot A and never returns. See
-    // docs/OS_UPDATES.md - unvalidated on real boot hardware as of this
-    // writing.
+    // May reboot straight back to slot A and never return - see update.rs.
     update::check_and_handle(persistent);
 
     // Everything that has to write to the image itself has now happened.
@@ -164,8 +160,6 @@ fn main() {
         );
     }
 
-    // Boot has reached the point this system considers itself successful; if
-    // this is an unconfirmed slot-B update, it is accepted from here on.
     update::confirm();
 
     console_loop(identity.as_ref(), persistent);
