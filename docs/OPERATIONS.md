@@ -48,9 +48,10 @@ the supervisor's status line for it will read `failed`.
    - **`vakt-net` failed**: usually a missing or malformed
      `/persistent/etc/vakt-net.conf`. Rewrite it from the panel's Wi-Fi Setup
      page, or check `ssid=`/`psk=`/`interface=` by hand.
-   - **`vakt-ids` failed**: check `/persistent` actually mounted (`No /dev/sda
-     present` in the boot log means it's running in RAM-only mode and has
-     nothing to watch — not a crash, but worth knowing).
+   - **`vakt-ids` failed**: check `/persistent` actually mounted (`No disk
+     labeled 'VAKTDATA' found` in the boot log means it's running in
+     RAM-only mode and has nothing to watch — not a crash, but worth
+     knowing).
    - **A `zrpkg`-installed package's service failed**: reinstall it
      (`zrpkg remove <name> && zrpkg install <name>`) in case the install was
      interrupted or partial.

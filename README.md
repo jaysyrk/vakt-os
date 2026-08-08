@@ -12,7 +12,7 @@ rootfs, a Rust PID 1, and the tools in this repository.
 ```
 GRUB → vmlinuz → initramfs → /init (vakt-init, Rust, PID 1)
                                 ├── mounts /proc /sys /dev, tmpfs over /run and /tmp
-                                ├── mounts /dev/sda → /persistent
+                                ├── mounts the disk labeled VAKTDATA → /persistent
                                 ├── remounts / read-only
                                 ├── supervises vakt-net (Wi-Fi/DHCP) and vakt-ids (integrity)
                                 └── drops to uid 1000, runs vakt-panel (TUI)
