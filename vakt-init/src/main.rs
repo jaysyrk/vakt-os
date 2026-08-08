@@ -302,7 +302,12 @@ fn watch_notifications(listener: Listener, control: Arc<Control>) {
 /// Loads a driver for every device the kernel has enumerated.
 ///
 /// Walking modaliases is what a udev rule would do; there is no udev here, and
-/// this runs once rather than watching for hotplug.
+/// this runs a few times rather than watching for hotplug - loading a
+/// controller driver (e.g. a USB host controller) can itself cause the
+/// devices attached to it to finish enumerating and gain their own modalias
+/// only after this scan already passed them by, so one static snapshot can
+/// miss real hardware. modprobe is idempotent, so repeating this costs
+/// nothing for devices already bound.
 ///
 /// The image's own kernel is monolithic and has no modules at all, in which
 /// case there is nothing to load and running modprobe a few hundred times to
@@ -313,10 +318,16 @@ fn load_modules() {
         return;
     }
 
-    let _ = Command::new("sh")
-        .arg("-c")
-        .arg("find /sys -name modalias -exec cat {} + | sort -u | xargs -n 1 modprobe 2>/dev/null")
-        .status();
+    const PASSES: u32 = 3;
+    for pass in 0..PASSES {
+        if pass > 0 {
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        let _ = Command::new("sh")
+            .arg("-c")
+            .arg("find /sys -name modalias -exec cat {} + | sort -u | xargs -n 1 modprobe 2>/dev/null")
+            .status();
+    }
 }
 
 fn banner() {
