@@ -33,6 +33,10 @@ macro_rules! log {
 fn main() {
     log!("Network daemon starting.");
 
+    // Must run before sandbox::confine() locks in the Landlock ruleset - see
+    // ensure_config_placeholder's own doc comment for why.
+    config::ensure_config_placeholder();
+
     // Before anything else runs, and before the first child process is spawned,
     // so the confinement covers the helpers too.
     match sandbox::confine(&[config::PERSISTENT_CONF, config::FALLBACK_CONF]) {
