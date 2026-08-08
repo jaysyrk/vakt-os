@@ -86,6 +86,37 @@ the code, not that the code has been exhaustively fuzzed. Worth running each
 for longer (hours, not seconds) periodically, and especially after touching
 any of the three functions above.
 
+## Finding: release builds wrapped integer overflow silently
+
+The Rust side had the same shape of problem as the Zig one below. No crate
+configured `[profile.release] overflow-checks`, and Rust's default for release
+is to **wrap silently** - confirmed, not assumed: the same underflow panics in
+debug and prints `4294967292` in release. Every binary in the image is built
+`cargo build --release`.
+
+This is not hypothetical here either. The compositor underflow noted further
+down this document was exactly that: arithmetic on `ioctl`-derived screen
+geometry producing a wrong value rather than failing. `overflow-checks` turns
+that class of bug into a loud stop instead of a bad number.
+
+**Fixed** by setting `overflow-checks = true` in the release profile of all
+five crates. Verified afterwards by running every test suite *in release*
+(they normally run in debug, where the checks were already on, so release is
+the only run that exercises the change): nothing in the existing code
+overflows.
+
+**The trade-off, stated plainly:** in `vakt-init` this adds implicit panic
+paths to arithmetic, and `vakt-init` is PID 1 - a panic there is a kernel
+panic. That crate was deliberately written with zero panic sources in
+production code (verified: no `unwrap`, `expect`, `panic!` or `unreachable!`
+outside its tests), so this does cut against that property. It is enabled
+there anyway for two reasons: its real overflow surface is negligible
+(restart counters on `u32`, byte totals on `u64`, and the one subtraction in
+`update.rs` is guarded by the `Some(0)` arm above it), and on a security
+appliance a loud halt is a better failure than a silently wrong value in the
+process that supervises everything else. Worth revisiting if a future change
+gives PID 1 real arithmetic on attacker-influenced numbers.
+
 ## Finding: the independent verifier shipped without safety checks
 
 `vakt-verify` was built with `zig build -Doptimize=ReleaseSmall`. In Zig,

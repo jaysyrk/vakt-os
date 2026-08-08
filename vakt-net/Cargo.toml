@@ -5,3 +5,11 @@ edition = "2024"
 
 [dependencies]
 landlock = "0.4.7"
+
+# Overflow is a wrong answer, not a fast one. Release builds default
+# to wrapping silently; this project has already had one integer
+# underflow bug (vakt-compositor, see docs/SECURITY_AUDIT.md) that
+# produced a bad value rather than a crash. The cost is negligible for
+# these workloads.
+[profile.release]
+overflow-checks = true

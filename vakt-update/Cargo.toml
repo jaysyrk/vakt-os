@@ -15,3 +15,11 @@ tokio = { version = "1.53.1", features = ["full"] }
 
 [dependencies.zrpkg]
 path = "../pkg-manager"
+
+# Overflow is a wrong answer, not a fast one. Release builds default
+# to wrapping silently; this project has already had one integer
+# underflow bug (vakt-compositor, see docs/SECURITY_AUDIT.md) that
+# produced a bad value rather than a crash. The cost is negligible for
+# these workloads.
+[profile.release]
+overflow-checks = true
