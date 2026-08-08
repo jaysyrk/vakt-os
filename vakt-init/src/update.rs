@@ -98,6 +98,16 @@ pub fn check_and_handle(persistent_mounted: bool) {
                 );
             }
             let _ = fs::remove_file(STATE_PATH);
+
+            // Same discipline as shutdown::execute: sync, unmount, sync again,
+            // then reboot. reboot(2) does not flush dirty pages on its own -
+            // skipping this can leave the bootenv write or the state-file
+            // deletion above never actually reaching disk, in which case the
+            // very next boot reads the stale state and rolls back again.
+            nix::unistd::sync();
+            crate::mount::unmount_persistent();
+            nix::unistd::sync();
+
             let _ = nix::sys::reboot::reboot(nix::sys::reboot::RebootMode::RB_AUTOBOOT);
             loop {
                 std::thread::park();
