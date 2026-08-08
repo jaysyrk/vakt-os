@@ -95,14 +95,29 @@ async fn main() -> anyhow::Result<()> {
         Commands::Pack {
             source_dir,
             private_key_hex,
+            key_file,
             out_dir,
             version,
             description,
             dependencies,
         } => {
+            let key = match (key_file, private_key_hex) {
+                (Some(path), None) => std::fs::read_to_string(path)
+                    .with_context(|| format!("Failed to read the signing key from {}", path))?
+                    .trim()
+                    .to_string(),
+                (None, Some(hex)) => hex.clone(),
+                (Some(_), Some(_)) => {
+                    anyhow::bail!("Pass either --key-file or a key on the command line, not both")
+                }
+                (None, None) => anyhow::bail!(
+                    "No signing key. Use --key-file <path> (the command line is \
+                     world-readable via /proc)"
+                ),
+            };
             pack::pack_directory(
                 source_dir,
-                private_key_hex,
+                &key,
                 out_dir.as_deref(),
                 version,
                 description,

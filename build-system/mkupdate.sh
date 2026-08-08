@@ -52,8 +52,7 @@ echo ""
 echo "[+] Signing update bundle..."
 mkdir -p "$REPO_DIR"
 rm -f "$REPO_DIR/vakt-update.zrp" "$REPO_DIR/vakt-update.json"
-PRIV_KEY=$(cat "$KEY_FILE")
-OUTPUT=$("$ZRPKG" pack "$BUNDLE_DIR" "$PRIV_KEY" -o "$REPO_DIR" \
+OUTPUT=$("$ZRPKG" pack "$BUNDLE_DIR" --key-file "$KEY_FILE" -o "$REPO_DIR" \
     --version "$VERSION" --description "Vakt OS image update (slot B).")
 echo "$OUTPUT" | sed 's/^/    /'
 

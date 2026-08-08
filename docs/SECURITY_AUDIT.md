@@ -86,6 +86,32 @@ the code, not that the code has been exhaustively fuzzed. Worth running each
 for longer (hours, not seconds) periodically, and especially after touching
 any of the three functions above.
 
+## Finding: the signing key was exposed twice on the build machine
+
+Two problems with the one secret that matters most here - the Ed25519 key
+every appliance's trust anchor is derived from. Anyone who reads it can sign
+packages `zrpkg` will install without complaint, because the signatures are
+genuinely valid.
+
+**Created world-readable.** `mkrepo.sh` generated it with a plain redirect
+and `chmod 600` afterwards. A redirect creates the file 0644 under the usual
+umask, so the key sat readable by every local user for the window between the
+two statements. Fixed by generating it under `umask 077` in a subshell, so it
+is never readable at any instant, and locking `build-system/keys/` to 0700.
+
+**Passed in argv.** `zrpkg pack` took the key as a positional command-line
+argument, and `mkrepo.sh` read the file and passed the contents - once per
+package, plus again in `mkupdate.sh`. `/proc/<pid>/cmdline` is mode 0444;
+verified by having an unprivileged uid read a root process's arguments back
+out. Fixed with a `--key-file` option that reads the key from a path instead,
+which is what both build scripts now use. The positional form still works,
+carries a doc comment explaining when it is acceptable (a throwaway key in a
+test), and is what CI's package-pipeline job exercises, so both paths stay
+covered.
+
+This is the same class as the Wi-Fi finding below, found by asking where else
+a secret crosses a process boundary.
+
 ## Finding: the Wi-Fi password was world-readable at runtime
 
 `vakt-net` wrote the generated supplicant configuration with

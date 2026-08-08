@@ -49,7 +49,6 @@ if [ ! -f "$KEY_FILE" ]; then
     # the redirect and the chmod.
     (umask 077 && openssl rand -hex 32 > "$KEY_FILE")
 fi
-PRIV_KEY=$(cat "$KEY_FILE")
 
 # --- Package definitions -----------------------------------------------------
 # Format: <package name>|<path to binary>|<version>|<description>|<comma-separated dependencies>
@@ -82,7 +81,7 @@ for entry in "${PACKAGES[@]}"; do
     cp "$binary" "$STAGE/$name/usr/bin/$name"
     chmod +x "$STAGE/$name/usr/bin/$name"
 
-    PACK_ARGS=(pack "$STAGE/$name" "$PRIV_KEY"
+    PACK_ARGS=(pack "$STAGE/$name" --key-file "$KEY_FILE"
         --out-dir "$REPO_DIR"
         --version "$version"
         --description "$description")
