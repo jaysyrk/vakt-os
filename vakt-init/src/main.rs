@@ -181,7 +181,14 @@ fn console_loop(identity: Option<&Identity>, persistent: bool) {
 
     while !shutdown::under_way() {
         println!("[Vakt-Init] Launching Vakt Panel...");
-        let _ = run_on_console(&["vakt-panel"], identity, &session);
+        // Absolute path, not "vakt-panel": the console session's PATH puts
+        // the zrpkg install root first (see session_environment) so an
+        // operator can type an installed package's name directly, but that
+        // means a bare name here would let any installed package containing
+        // usr/bin/vakt-panel silently replace the real panel on every future
+        // launch. cttyhack's own exec only consults PATH for a name with no
+        // '/' in it, so a literal absolute path bypasses that lookup.
+        let _ = run_on_console(&["/usr/bin/vakt-panel"], identity, &session);
 
         if shutdown::under_way() {
             break;
