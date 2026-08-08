@@ -165,7 +165,7 @@ fn connect(cfg: &NetConfig) -> Result<String, String> {
             });
         }
 
-        std::fs::write(WPA_CONF, &output.stdout)
+        write_private(Path::new(WPA_CONF), &output.stdout)
             .map_err(|e| format!("cannot write {}: {}", WPA_CONF, e))?;
 
         log!("Starting wpa_supplicant on {}.", cfg.interface);
@@ -271,6 +271,30 @@ fn interface_address(interface: &str) -> Option<String> {
         })
 }
 
+/// Writes `contents` to `path` readable only by root.
+///
+/// `std::fs::write` would create it 0644, and what goes in here is the
+/// supplicant configuration: `wpa_passphrase` emits the network's plaintext
+/// password as a `#psk="..."` comment beside the hashed one, so a
+/// world-readable copy hands the Wi-Fi password to every uid on the system -
+/// including the unprivileged panel user and anything zrpkg installs.
+///
+/// Any stale file is removed first rather than being reopened and truncated:
+/// `OpenOptions::mode` only applies to a file it actually creates, so
+/// truncating an existing 0644 file would silently keep the wrong mode.
+fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let _ = std::fs::remove_file(path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(contents)
+}
+
 fn stop_previous_supplicant() {
     kill_from_pidfile(WPA_PID);
 }
@@ -296,4 +320,50 @@ fn kill_from_pidfile(pid_file: &str) {
 /// by the address check.
 fn run(program: &str, args: &[&str]) {
     let _ = Command::new(program).args(args).status();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("vakt-net-wpa-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn mode_of(path: &Path) -> u32 {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn the_supplicant_config_is_readable_only_by_root() {
+        let dir = scratch("fresh");
+        let path = dir.join("wpa_supplicant.conf");
+
+        write_private(&path, b"network={\n\t#psk=\"plaintext\"\n}\n").unwrap();
+
+        assert_eq!(mode_of(&path), 0o600);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// OpenOptions::mode only applies to a file it creates, so a stale
+    /// world-readable config left by an earlier run must be replaced rather
+    /// than truncated in place - otherwise the wrong mode survives silently.
+    #[test]
+    fn a_stale_world_readable_config_does_not_keep_its_mode() {
+        let dir = scratch("stale");
+        let path = dir.join("wpa_supplicant.conf");
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(mode_of(&path), 0o644);
+
+        write_private(&path, b"new").unwrap();
+
+        assert_eq!(mode_of(&path), 0o600);
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

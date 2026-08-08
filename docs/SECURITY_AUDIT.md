@@ -86,6 +86,27 @@ the code, not that the code has been exhaustively fuzzed. Worth running each
 for longer (hours, not seconds) periodically, and especially after touching
 any of the three functions above.
 
+## Finding: the Wi-Fi password was world-readable at runtime
+
+`vakt-net` wrote the generated supplicant configuration with
+`std::fs::write`, which creates a file 0644. Two things make that worse than
+it sounds: `/run` is a tmpfs mounted 0755, so every uid on the system can
+reach into it, and `wpa_passphrase` emits the network's **plaintext**
+password as a `#psk="..."` comment beside the hashed one. The Wi-Fi password
+was therefore readable by the unprivileged panel user and by anything
+installed through `zrpkg`, which runs as that same user.
+
+This also quietly contradicted the security model in the README, which says
+the PSK is protected by root-only file permissions. That was true of
+`/persistent/etc/vakt-net.conf` (0600) and false of the runtime copy.
+
+**Fixed** with a `write_private` helper that creates the file 0600. It
+removes any stale file first rather than truncating in place, because
+`OpenOptions::mode` applies only to a file it actually creates - reopening an
+existing 0644 config would have kept the wrong mode silently. Both cases are
+pinned by tests. The README's claim is now true as written rather than
+weakened to match the code.
+
 ## Finding: release builds wrapped integer overflow silently
 
 The Rust side had the same shape of problem as the Zig one below. No crate
