@@ -66,6 +66,13 @@ fn main() {
     println!("[Vakt-Init] Isolating volatile RAM filesystems...");
     mount::volatile_filesystems();
 
+    // Must run before mount_persistent(): the storage controller and disk
+    // driver the data disk needs are commonly loadable modules, not built
+    // into the kernel, and searching for the disk before its driver exists
+    // can never find it.
+    println!("[Vakt-Init] Loading hardware drivers...");
+    load_modules();
+
     println!("[Vakt-Init] Searching for persistent storage...");
     let persistent = mount::mount_persistent();
 
@@ -75,9 +82,6 @@ fn main() {
     // Everything that has to write to the image itself has now happened.
     mount::seal_root();
     shutdown::disable_ctrl_alt_del();
-
-    println!("[Vakt-Init] Loading hardware drivers...");
-    load_modules();
 
     // The panel and everything it launches runs as this user. Without the
     // account the system still boots; it just boots less safely, and says so.
