@@ -150,11 +150,14 @@ fn connect(cfg: &NetConfig) -> Result<String, String> {
         stop_previous_supplicant();
 
         log!("Generating supplicant config for SSID '{}'.", ssid);
-        let output = Command::new("wpa_passphrase")
-            .arg(ssid)
-            .arg(psk)
-            .output()
-            .map_err(|e| format!("wpa_passphrase unavailable: {}", e))?;
+        // The passphrase goes in over stdin, not as an argument.
+        // /proc/<pid>/cmdline is mode 0444 - any uid on the system can read
+        // another process's arguments - so passing the PSK in argv would
+        // publish the Wi-Fi password to the unprivileged panel user and to
+        // anything zrpkg installed, once per connect and again on every
+        // retry. wpa_passphrase reads the passphrase from stdin when it is
+        // not given as an argument, which is the interface to use here.
+        let output = wpa_passphrase(ssid, psk)?;
 
         if !output.status.success() {
             let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -269,6 +272,36 @@ fn interface_address(interface: &str) -> Option<String> {
                 .next()
                 .map(str::to_string)
         })
+}
+
+/// Runs `wpa_passphrase <ssid>`, feeding the passphrase over stdin so it
+/// never appears in the process's argument vector. See the call site for why
+/// argv is not an acceptable place for it.
+fn wpa_passphrase(ssid: &str, psk: &str) -> Result<std::process::Output, String> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new("wpa_passphrase")
+        .arg(ssid)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("wpa_passphrase unavailable: {}", e))?;
+
+    // Dropped at the end of this block, closing the pipe: wpa_passphrase
+    // reads until EOF, so leaving it open would leave both sides waiting.
+    {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "wpa_passphrase stdin unavailable".to_string())?;
+        writeln!(stdin, "{}", psk).map_err(|e| format!("cannot send the passphrase: {}", e))?;
+    }
+
+    child
+        .wait_with_output()
+        .map_err(|e| format!("wpa_passphrase failed: {}", e))
 }
 
 /// Writes `contents` to `path` readable only by root.

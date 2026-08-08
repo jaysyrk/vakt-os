@@ -107,6 +107,15 @@ existing 0644 config would have kept the wrong mode silently. Both cases are
 pinned by tests. The README's claim is now true as written rather than
 weakened to match the code.
 
+The same finding had a second half. The passphrase was also handed to
+`wpa_passphrase` as a **command-line argument**, and `/proc/<pid>/cmdline` is
+mode 0444 - verified by having an unprivileged uid read a root process's
+arguments back out. So the plaintext password was exposed a second way, once
+per connection attempt and again on every backoff retry, to anyone able to
+poll `/proc`. Fixed by feeding the passphrase over stdin instead, which is
+what `wpa_passphrase` does when the argument is omitted; checked against a
+stand-in binary that both the success and the rejection path still behave.
+
 ## Finding: release builds wrapped integer overflow silently
 
 The Rust side had the same shape of problem as the Zig one below. No crate
