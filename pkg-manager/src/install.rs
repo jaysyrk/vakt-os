@@ -443,6 +443,104 @@ mod tests {
         assert!(unpack_recording(&zrp, &root).is_err());
     }
 
+    /// Builds a .zrp whose first entry is a symlink and whose second writes
+    /// through it. Neither entry *name* contains `..` or a leading `/`, so
+    /// `safe_relative`'s lexical check passes both - an escape here would come
+    /// entirely from the filesystem following the link during extraction.
+    fn archive_with_symlink(path: &Path, link: &str, target: &str, then: (&str, &[u8])) {
+        let encoder = GzEncoder::new(File::create(path).unwrap(), Compression::fast());
+        let mut builder = tar::Builder::new(encoder);
+
+        let mut header = tar::Header::new_gnu();
+        let raw = link.as_bytes();
+        header.as_old_mut().name[..raw.len()].copy_from_slice(raw);
+        let raw_target = target.as_bytes();
+        header.as_old_mut().linkname[..raw_target.len()].copy_from_slice(raw_target);
+        header.set_size(0);
+        header.set_mode(0o777);
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_cksum();
+        builder.append(&header, std::io::empty()).unwrap();
+
+        let (name, contents) = then;
+        let mut header = tar::Header::new_gnu();
+        let raw = name.as_bytes();
+        header.as_old_mut().name[..raw.len()].copy_from_slice(raw);
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o644);
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_cksum();
+        builder.append(&header, contents).unwrap();
+
+        builder.into_inner().unwrap().finish().unwrap();
+    }
+
+    /// The classic tar extraction attack: plant a symlink pointing out of the
+    /// install root, then write "through" it with a later entry whose own name
+    /// looks innocent. Nothing may appear outside the root, whether the
+    /// install aborts or the entry is refused. Currently upheld by the tar
+    /// crate's own `unpack_in` containment rather than by `safe_relative`,
+    /// which is exactly why it is pinned here: a future change of extraction
+    /// method would otherwise reopen it silently.
+    #[test]
+    fn a_symlink_cannot_be_used_to_write_outside_the_root() {
+        let dir = scratch("symlink-escape");
+        let zrp = dir.join("evil.zrp");
+        let root = dir.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let outside = dir.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+
+        archive_with_symlink(
+            &zrp,
+            "escape",
+            "../outside",
+            ("escape/pwned", b"written outside the install root"),
+        );
+        let result = unpack_recording(&zrp, &root);
+
+        assert!(
+            !outside.join("pwned").exists(),
+            "a package wrote through a symlink and escaped the install root"
+        );
+        // Non-vacuity: the archive really does encode the attack, so a pass
+        // above means containment rather than an unreadable archive that
+        // never extracted anything. Either the extraction refused outright,
+        // or it ran and confined the write inside the root.
+        assert!(
+            result.is_err() || root.join("escape").symlink_metadata().is_ok(),
+            "neither refused nor extracted: the test archive is not exercising the attack"
+        );
+    }
+
+    /// The same attack aimed at an absolute path rather than a relative one.
+    #[test]
+    fn an_absolute_symlink_cannot_be_used_to_write_outside_the_root() {
+        let dir = scratch("symlink-absolute");
+        let zrp = dir.join("evil.zrp");
+        let root = dir.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let outside = dir.join("abs-outside");
+        std::fs::create_dir_all(&outside).unwrap();
+
+        archive_with_symlink(
+            &zrp,
+            "escape",
+            outside.to_str().unwrap(),
+            ("escape/pwned", b"written outside the install root"),
+        );
+        let result = unpack_recording(&zrp, &root);
+
+        assert!(
+            !outside.join("pwned").exists(),
+            "a package wrote through an absolute symlink and escaped the install root"
+        );
+        assert!(
+            result.is_err() || root.join("escape").symlink_metadata().is_ok(),
+            "neither refused nor extracted: the test archive is not exercising the attack"
+        );
+    }
+
     /// The trust anchor is the whole basis for installing anything, so its
     /// absence has to be an error rather than a warning.
     #[test]
