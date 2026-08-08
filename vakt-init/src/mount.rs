@@ -187,18 +187,56 @@ fn parse_label(raw: &[u8; LABEL_LEN]) -> Option<String> {
     (!text.is_empty()).then(|| text.to_string())
 }
 
+/// Every block device name the kernel currently knows about, whole disks and
+/// their partitions alike.
+///
+/// `/sys/block` lists only whole disks (`sda`, `nvme0n1`); a disk's
+/// partitions are subdirectories *inside* its entry (`/sys/block/sda/sda1`),
+/// so scanning the top level alone would never find a data disk that was
+/// partitioned rather than formatted whole - which the README's own
+/// `mkfs.ext4 -L VAKTDATA /dev/sdY` avoids, but nothing enforces.
+fn block_device_names() -> Vec<String> {
+    block_device_names_in(Path::new("/sys/block"))
+}
+
+/// Split out from [`block_device_names`] so the partition-walking is testable
+/// against a fake sysfs tree.
+fn block_device_names_in(sys_block: &Path) -> Vec<String> {
+    let mut names = Vec::new();
+
+    let Ok(disks) = fs::read_dir(sys_block) else {
+        return names;
+    };
+    for disk in disks.filter_map(|e| e.ok()) {
+        let Ok(disk_name) = disk.file_name().into_string() else {
+            continue;
+        };
+
+        // A partition's sysfs directory is identified by carrying a
+        // `partition` file; other subdirectories (`queue`, `power`, the
+        // `holders` symlinks) do not.
+        if let Ok(children) = fs::read_dir(disk.path()) {
+            for child in children.filter_map(|e| e.ok()) {
+                if child.path().join("partition").exists() {
+                    if let Ok(part_name) = child.file_name().into_string() {
+                        names.push(part_name);
+                    }
+                }
+            }
+        }
+
+        names.push(disk_name);
+    }
+
+    names.sort();
+    names
+}
+
 /// Scans every block device the kernel currently knows about for one labeled
 /// [`PERSISTENT_LABEL`]. A single pass - callers needing to wait for a
 /// slower device retry this themselves.
 fn find_persistent_once() -> Option<PathBuf> {
-    let mut names: Vec<String> = fs::read_dir("/sys/block")
-        .ok()?
-        .filter_map(|e| e.ok())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect();
-    names.sort();
-
-    names
+    block_device_names()
         .into_iter()
         .map(|name| PathBuf::from(format!("/dev/{}", name)))
         .find(|device| ext4_label(device).as_deref() == Some(PERSISTENT_LABEL))
@@ -336,6 +374,52 @@ mod tests {
             .unwrap();
 
         assert_eq!(ext4_label(&path), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Builds a fake `/sys/block` tree: each disk is a directory, each of its
+    /// partitions a subdirectory carrying a `partition` file, plus the
+    /// ordinary non-partition subdirectories real sysfs has.
+    fn fake_sys_block(root: &Path, disks: &[(&str, &[&str])]) {
+        for (disk, partitions) in disks {
+            let disk_dir = root.join(disk);
+            std::fs::create_dir_all(disk_dir.join("queue")).unwrap();
+            std::fs::create_dir_all(disk_dir.join("power")).unwrap();
+            for partition in *partitions {
+                let part_dir = disk_dir.join(partition);
+                std::fs::create_dir_all(&part_dir).unwrap();
+                std::fs::write(part_dir.join("partition"), "1\n").unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn block_devices_include_partitions_not_just_whole_disks() {
+        let dir = scratch("partitions");
+        fake_sys_block(&dir, &[("sda", &["sda1", "sda2"]), ("sdb", &[])]);
+
+        let names = block_device_names_in(&dir);
+
+        assert_eq!(names, vec!["sda", "sda1", "sda2", "sdb"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn non_partition_subdirectories_are_not_mistaken_for_devices() {
+        let dir = scratch("nonpartition");
+        fake_sys_block(&dir, &[("nvme0n1", &["nvme0n1p1"])]);
+
+        let names = block_device_names_in(&dir);
+
+        assert_eq!(names, vec!["nvme0n1", "nvme0n1p1"]);
+        assert!(!names.iter().any(|n| n == "queue" || n == "power"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_missing_sys_block_yields_no_devices_rather_than_panicking() {
+        let dir = scratch("nosysblock");
+        assert!(block_device_names_in(&dir.join("absent")).is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }
 
