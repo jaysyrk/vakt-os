@@ -294,6 +294,12 @@ if [ "$VAKT_KERNEL" = "host" ]; then
     cp -r "/lib/modules/$(uname -r)" "$ROOTFS/lib/modules/"
     cp -r /lib/firmware/* "$ROOTFS/lib/firmware/" 2>/dev/null || true
     copy_deps "$(command -v modprobe)" "$ROOTFS"
+    # busybox's own modprobe applet (linked below, into /bin) can't decompress
+    # the .ko.zst/.ko.xz files a real kernel package ships, and /bin comes
+    # before /usr/bin (where copy_deps just placed the real one) in
+    # vakt-init's PATH - so it would otherwise shadow the one that actually
+    # works, and every module fails to load with "invalid ELF header magic".
+    rm -f "$ROOTFS/bin/modprobe"
 else
     # A monolithic kernel has no modules, so there is no /lib/modules and no
     # firmware tree - which is most of why this image is small.
