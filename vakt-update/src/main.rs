@@ -44,6 +44,28 @@ fn main() {
     }
 }
 
+/// A staging directory only this process can write into.
+///
+/// This runs as root and `/tmp` is a world-writable tmpfs on the appliance,
+/// so downloading to a fixed `/tmp/vakt-update.zrp` would let anyone able to
+/// run code as the panel user pre-plant that path as a symlink and have root
+/// write the bundle through it. Created 0700 at creation time rather than
+/// chmod'd after, and non-recursively so an occupied path fails outright
+/// instead of being reused.
+fn private_staging_dir() -> Result<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let dir = std::env::temp_dir().join(format!("vakt-update-staging-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&dir);
+
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&dir)
+        .with_context(|| format!("creating the staging directory {}", dir.display()))?;
+    Ok(dir)
+}
+
 fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Runtime::new().expect("failed to start async runtime")
 }
@@ -89,7 +111,7 @@ fn apply(reboot: bool) -> Result<()> {
     let manifest = runtime().block_on(fetch_manifest(&config.repo_url))?;
 
     let archive_url = format!("{}/{}.zrp", config.repo_url, BUNDLE_NAME);
-    let tmp = std::env::temp_dir().join(format!("{}.zrp", BUNDLE_NAME));
+    let tmp = private_staging_dir()?.join(format!("{}.zrp", BUNDLE_NAME));
     runtime()
         .block_on(async {
             let client = reqwest::Client::new();

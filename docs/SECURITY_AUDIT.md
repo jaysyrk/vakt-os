@@ -86,6 +86,31 @@ the code, not that the code has been exhaustively fuzzed. Worth running each
 for longer (hours, not seconds) periodically, and especially after touching
 any of the three functions above.
 
+## Finding: downloads were staged at a predictable path in a shared /tmp
+
+`zrpkg` downloaded packages to a fixed `/tmp/<name>.zrp`, and `vakt-update`
+to `/tmp/vakt-update.zrp`. On the appliance `/tmp` is a tmpfs mounted 1777,
+and a create through a symlink follows it - checked, not assumed. So anyone
+able to run code there could pre-plant either path as a symlink and have the
+download written through it, over a file of their choosing.
+
+`vakt-update` runs as root, which makes that a local privilege escalation
+rather than a nuisance: a process running as the unprivileged panel user
+could pick the target and have root do the writing. `zrpkg` is the same
+whenever it is run from the root recovery shell.
+
+`build.sh` already names this exact primitive in a comment and avoids it with
+`mktemp -d`; these two simply hadn't had the same treatment. **Fixed** with a
+`private_staging_dir` in each: created 0700 at creation time rather than
+chmod'd afterwards, and non-recursively, so an occupied path fails outright
+instead of being reused. Losing the race now means failing closed.
+
+Writing the tests for this turned up the same parallel-test hazard recorded
+at the top of this document, in a new guise: the staging path is derived from
+the pid, so two tests in one process contend for a single name. They take a
+`Mutex` for the same reason the environment-variable tests do. The failure
+that exposed it was the new code correctly refusing an occupied path.
+
 ## Finding: the signing key was exposed twice on the build machine
 
 Two problems with the one secret that matters most here - the Ed25519 key

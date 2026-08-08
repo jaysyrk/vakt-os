@@ -56,6 +56,36 @@ fn trusted_public_key() -> Result<String> {
     Ok(key)
 }
 
+/// A staging directory only this process can write into.
+///
+/// Downloads used to land on a fixed `/tmp/<name>.zrp`. `/tmp` is a
+/// world-writable tmpfs on the appliance (mode 1777), so anyone able to run
+/// code there could pre-plant that path as a symlink and have the download
+/// written through it - the same local privilege-escalation primitive
+/// `build.sh` already avoids with `mktemp -d`, and worse when `zrpkg` is run
+/// from the root recovery shell.
+///
+/// The directory is created 0700 at creation time, not chmod'd afterwards,
+/// and `DirBuilder::create` is non-recursive so it fails outright if
+/// anything already occupies the path. Losing the race therefore means
+/// failing closed rather than writing somewhere unintended.
+fn private_staging_dir() -> Result<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let dir = std::env::temp_dir().join(format!("zrpkg-staging-{}", std::process::id()));
+    // Clear whatever is there first: a directory left by a crashed run, or
+    // something planted. Both forms, since one call handles a directory and
+    // the other a file or symlink.
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&dir);
+
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&dir)
+        .with_context(|| format!("Failed to create the staging directory {}", dir.display()))?;
+    Ok(dir)
+}
+
 pub struct Installer {
     client: Client,
     repo_url: String,
@@ -246,8 +276,7 @@ impl Installer {
     }
 
     async fn download(&self, name: &str) -> Result<PathBuf> {
-        let staging = Path::new("/tmp");
-        std::fs::create_dir_all(staging).context("Failed to create /tmp")?;
+        let staging = private_staging_dir()?;
         let staged = staging.join(format!("{}.zrp", name));
 
         println!("  Fetching {}.zrp...", name);
@@ -441,6 +470,63 @@ mod tests {
 
         archive(&zrp, &[("/etc/passwd", b"root::0:0::/:/bin/sh")]);
         assert!(unpack_recording(&zrp, &root).is_err());
+    }
+
+    /// `private_staging_dir` derives one path per process, so the tests
+    /// below are contending for a single name on separate threads - the same
+    /// hazard as the environment-variable locks in config.rs and install.rs.
+    /// Serialize just these two rather than the whole suite.
+    static STAGING_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// The staging directory is what stops a world-writable /tmp being used
+    /// to redirect a download. It must be private, and it must refuse a path
+    /// somebody else already occupies rather than reusing it.
+    #[test]
+    fn the_staging_directory_is_private_and_freshly_created() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = STAGING_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let dir = private_staging_dir().unwrap();
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "staging must not be reachable by other users");
+
+        // A stale directory from an earlier run is cleared, not reused with
+        // whatever it contained.
+        std::fs::write(dir.join("left-over.zrp"), b"stale").unwrap();
+        let again = private_staging_dir().unwrap();
+        assert_eq!(again, dir);
+        assert!(!again.join("left-over.zrp").exists());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A symlink planted at the staging path must not be followed - this is
+    /// the /tmp primitive build.sh calls out and avoids with mktemp -d.
+    #[test]
+    fn a_symlink_planted_at_the_staging_path_is_not_written_through() {
+        let _guard = STAGING_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = scratch("planted");
+        let victim = dir.join("victim");
+        std::fs::write(&victim, b"ORIGINAL").unwrap();
+
+        let staging = std::env::temp_dir().join(format!("zrpkg-staging-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&staging);
+        let _ = std::fs::remove_file(&staging);
+        std::os::unix::fs::symlink(&victim, &staging).unwrap();
+
+        // Whatever happens, the victim must not be clobbered and the result
+        // must not be a directory reached through the link.
+        if let Ok(created) = private_staging_dir() {
+            assert!(
+                created.symlink_metadata().unwrap().file_type().is_dir(),
+                "staging resolved to something that is not a real directory"
+            );
+        }
+        assert_eq!(std::fs::read(&victim).unwrap(), b"ORIGINAL");
+
+        let _ = std::fs::remove_dir_all(&staging);
+        let _ = std::fs::remove_file(&staging);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// Builds a .zrp whose first entry is a symlink and whose second writes
