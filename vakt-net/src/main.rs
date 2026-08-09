@@ -150,25 +150,8 @@ fn connect(cfg: &NetConfig) -> Result<String, String> {
         stop_previous_supplicant();
 
         log!("Generating supplicant config for SSID '{}'.", ssid);
-        // The passphrase goes in over stdin, not as an argument.
-        // /proc/<pid>/cmdline is mode 0444 - any uid on the system can read
-        // another process's arguments - so passing the PSK in argv would
-        // publish the Wi-Fi password to the unprivileged panel user and to
-        // anything zrpkg installed, once per connect and again on every
-        // retry. wpa_passphrase reads the passphrase from stdin when it is
-        // not given as an argument, which is the interface to use here.
-        let output = wpa_passphrase(ssid, psk)?;
-
-        if !output.status.success() {
-            let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(if err.is_empty() {
-                "wpa_passphrase rejected the SSID/password".to_string()
-            } else {
-                err
-            });
-        }
-
-        write_private(Path::new(WPA_CONF), &output.stdout)
+        let conf = supplicant_config(ssid, psk)?;
+        write_private(Path::new(WPA_CONF), conf.as_bytes())
             .map_err(|e| format!("cannot write {}: {}", WPA_CONF, e))?;
 
         log!("Starting wpa_supplicant on {}.", cfg.interface);
@@ -274,43 +257,72 @@ fn interface_address(interface: &str) -> Option<String> {
         })
 }
 
-/// Runs `wpa_passphrase <ssid>`, feeding the passphrase over stdin so it
-/// never appears in the process's argument vector. See the call site for why
-/// argv is not an acceptable place for it.
-fn wpa_passphrase(ssid: &str, psk: &str) -> Result<std::process::Output, String> {
-    use std::io::Write;
-    use std::process::Stdio;
-
-    let mut child = Command::new("wpa_passphrase")
-        .arg(ssid)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("wpa_passphrase unavailable: {}", e))?;
-
-    // Dropped at the end of this block, closing the pipe: wpa_passphrase
-    // reads until EOF, so leaving it open would leave both sides waiting.
-    {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "wpa_passphrase stdin unavailable".to_string())?;
-        writeln!(stdin, "{}", psk).map_err(|e| format!("cannot send the passphrase: {}", e))?;
+/// Builds the wpa_supplicant configuration for one network.
+///
+/// This used to shell out to `wpa_passphrase`, which is the documented way to
+/// turn a passphrase into a PSK, and there is no way to call it that is both
+/// correct and safe. Given the passphrase in argv it publishes the Wi-Fi
+/// password to every uid on the machine, `/proc/<pid>/cmdline` being mode
+/// 0444. Given it on stdin instead, it tries to turn off terminal echo first
+/// and a supervised daemon has no terminal, so it dies with
+/// `tcgetattr: Inappropriate ioctl for device` and the connection fails.
+///
+/// wpa_supplicant accepts a quoted passphrase and derives the PSK itself, so
+/// the subprocess buys nothing. Nor does it cost any secrecy: `wpa_passphrase`
+/// wrote the plaintext into this same file anyway, as a `#psk="..."` comment
+/// beside the hash, and [`write_private`] keeps the file 0600 and root-owned
+/// either way.
+fn supplicant_config(ssid: &str, psk: &str) -> Result<String, String> {
+    config_safe("network name", ssid)?;
+    if ssid.len() > 32 {
+        return Err("a Wi-Fi network name cannot be longer than 32 characters".to_string());
     }
 
-    child
-        .wait_with_output()
-        .map_err(|e| format!("wpa_passphrase failed: {}", e))
+    // 64 hex digits is already a derived PSK rather than a passphrase, and
+    // wpa_supplicant tells the two apart by the quoting, not by the length.
+    let psk_line = if psk.len() == 64 && psk.bytes().all(|b| b.is_ascii_hexdigit()) {
+        format!("\tpsk={}\n", psk)
+    } else {
+        config_safe("password", psk)?;
+        if !(8..=63).contains(&psk.len()) {
+            return Err("a Wi-Fi password must be 8 to 63 characters".to_string());
+        }
+        format!("\tpsk=\"{}\"\n", psk)
+    };
+
+    Ok(format!("network={{\n\tssid=\"{}\"\n{}}}\n", ssid, psk_line))
+}
+
+/// Rejects anything that cannot survive being written between double quotes.
+///
+/// Refused rather than escaped: a newline here would let whoever sets the
+/// network name append arbitrary directives to the supplicant's configuration,
+/// and no legal SSID or WPA passphrase contains one. Saying so plainly beats
+/// silently connecting to something other than what was asked for.
+fn config_safe(field: &str, value: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Err(format!("the Wi-Fi {} is empty", field));
+    }
+    if let Some(bad) = value
+        .chars()
+        .find(|c| c.is_control() || *c == '"' || *c == '\\')
+    {
+        return Err(format!(
+            "the Wi-Fi {} contains a character the supplicant's configuration \
+             cannot carry: {:?}",
+            field, bad
+        ));
+    }
+    Ok(())
 }
 
 /// Writes `contents` to `path` readable only by root.
 ///
 /// `std::fs::write` would create it 0644, and what goes in here is the
-/// supplicant configuration: `wpa_passphrase` emits the network's plaintext
-/// password as a `#psk="..."` comment beside the hashed one, so a
-/// world-readable copy hands the Wi-Fi password to every uid on the system -
-/// including the unprivileged panel user and anything zrpkg installs.
+/// supplicant configuration, which carries the network's password in the
+/// clear. `/run` is a tmpfs mounted 0755, so a world-readable copy there hands
+/// the Wi-Fi password to every uid on the system - including the unprivileged
+/// panel user and anything zrpkg installs.
 ///
 /// Any stale file is removed first rather than being reopened and truncated:
 /// `OpenOptions::mode` only applies to a file it actually creates, so
@@ -398,5 +410,75 @@ mod tests {
         assert_eq!(mode_of(&path), 0o600);
         assert_eq!(std::fs::read(&path).unwrap(), b"new");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The passphrase must reach wpa_supplicant without ever being an
+    /// argument and without needing a terminal - the two ways this was wrong
+    /// before.
+    #[test]
+    fn a_passphrase_is_written_quoted_for_wpa_supplicant_to_derive() {
+        let conf = supplicant_config("Stkyezone_EXT", "correcthorsebattery").unwrap();
+        assert_eq!(
+            conf,
+            "network={\n\tssid=\"Stkyezone_EXT\"\n\tpsk=\"correcthorsebattery\"\n}\n"
+        );
+    }
+
+    /// 64 hex digits is a derived PSK already. Quoting it would make
+    /// wpa_supplicant treat the hash itself as the passphrase and hash it
+    /// again, so the network would simply never associate.
+    #[test]
+    fn an_already_derived_psk_is_written_unquoted() {
+        let raw = "a".repeat(64);
+        let conf = supplicant_config("Net", &raw).unwrap();
+        assert!(conf.contains(&format!("psk={}\n", raw)), "{}", conf);
+        assert!(
+            !conf.contains("psk=\""),
+            "a raw PSK must not be quoted: {}",
+            conf
+        );
+    }
+
+    /// Whoever types the network name into the panel must not be able to
+    /// append directives to the supplicant's configuration.
+    #[test]
+    fn a_newline_cannot_smuggle_extra_configuration_in() {
+        let injected = supplicant_config("Net\n}\nnetwork={\n\tssid=\"Evil\"", "password123");
+        assert!(injected.is_err(), "a newline in the SSID must be refused");
+
+        let via_psk = supplicant_config("Net", "pass\n\tkey_mgmt=NONE");
+        assert!(
+            via_psk.is_err(),
+            "a newline in the password must be refused"
+        );
+
+        let quoted = supplicant_config("Net", "pass\"word\"here");
+        assert!(quoted.is_err(), "a double quote must be refused");
+    }
+
+    #[test]
+    fn a_passphrase_wpa_cannot_use_is_refused_before_the_radio_is_touched() {
+        assert!(
+            supplicant_config("Net", "short").is_err(),
+            "under 8 characters"
+        );
+        assert!(
+            supplicant_config("Net", &"x".repeat(64)).is_err(),
+            "over 63 characters"
+        );
+        assert!(supplicant_config("Net", "").is_err(), "empty");
+        assert!(supplicant_config("", "password123").is_err(), "empty SSID");
+        assert!(
+            supplicant_config(&"n".repeat(33), "password123").is_err(),
+            "an SSID cannot exceed 32 characters"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_password_with_punctuation_is_accepted() {
+        // The parser already allows = # and spaces in a password; the config
+        // writer must not quietly disagree with it.
+        let conf = supplicant_config("Net", "a b=c#d!$%").unwrap();
+        assert!(conf.contains("psk=\"a b=c#d!$%\"\n"), "{}", conf);
     }
 }

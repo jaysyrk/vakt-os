@@ -11,7 +11,7 @@
 //! What survives the ruleset is only what the daemon demonstrably needs:
 //!
 //! * read and execute on the image's own program directories, because the work
-//!   is done by `ip`, `wpa_supplicant`, `wpa_passphrase` and `udhcpc`, and a
+//!   is done by `ip`, `wpa_supplicant` and `udhcpc`, and a
 //!   Landlock ruleset is inherited by everything they run in turn;
 //! * read and write under `/run`, where the supplicant config, the pid files,
 //!   the resolver configuration and the status file live, plus four device

@@ -252,7 +252,10 @@ EOF
 # --- Networking stack --------------------------------------------------------
 echo "[+] Extracting the Wi-Fi stack..."
 copy_deps "$(command -v wpa_supplicant)" "$ROOTFS"
-copy_deps "$(command -v wpa_passphrase)" "$ROOTFS"
+# wpa_passphrase is deliberately not shipped: vakt-net writes the supplicant
+# configuration itself, because there is no way to call wpa_passphrase that is
+# both safe (not via argv, which /proc publishes) and workable (not via stdin,
+# which needs a terminal a daemon does not have).
 mkdir -p "$ROOTFS/etc/ssl/certs" "$ROOTFS/etc/ca-certificates/extracted"
 cp -L -r /etc/ssl/certs/* "$ROOTFS/etc/ssl/certs/" 2>/dev/null || true
 cp -L /etc/ca-certificates/extracted/tls-ca-bundle.pem \

@@ -172,9 +172,30 @@ The same finding had a second half. The passphrase was also handed to
 mode 0444 - verified by having an unprivileged uid read a root process's
 arguments back out. So the plaintext password was exposed a second way, once
 per connection attempt and again on every backoff retry, to anyone able to
-poll `/proc`. Fixed by feeding the passphrase over stdin instead, which is
-what `wpa_passphrase` does when the argument is omitted; checked against a
-stand-in binary that both the success and the rejection path still behave.
+poll `/proc`.
+
+The first attempt at fixing that was wrong, and only real hardware caught it.
+Feeding the passphrase over stdin is documented to work, and it does -
+interactively. `wpa_passphrase` turns off terminal echo before reading, so
+under a supervised daemon, which has no terminal, it dies with
+`tcgetattr: Inappropriate ioctl for device` and Wi-Fi never associates at all.
+A stand-in binary in the tests did not reproduce that, because a stand-in has
+no opinion about terminals.
+
+There is no way to call `wpa_passphrase` that is both correct and safe, so it
+is no longer called, or shipped. `vakt-net` writes the supplicant
+configuration itself with the passphrase quoted, which wpa_supplicant accepts
+and derives the PSK from. That costs nothing in secrecy - `wpa_passphrase`
+wrote the plaintext into the same 0600 file anyway, as a `#psk="..."` comment
+beside the hash - and it removes a subprocess and a binary from the image.
+
+Writing that file by hand introduces a risk the subprocess did not have:
+whoever types the network name into the panel is writing into a configuration
+format. A newline would let them append arbitrary supplicant directives. SSID
+and passphrase are therefore refused, not escaped, if they contain a newline,
+a quote, a backslash or any other control character - none of which is legal
+in either field - with tests that try to smuggle a second `network={` block
+through both.
 
 ## Finding: release builds wrapped integer overflow silently
 
