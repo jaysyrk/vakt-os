@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 )
 
 func TestSetAndVerifyPIN(t *testing.T) {
@@ -154,5 +157,57 @@ func TestMalformedStoredPINDoesNotVerify(t *testing.T) {
 	}
 	if verifyPINAt(path, "anything") {
 		t.Error("a malformed auth file must not verify")
+	}
+}
+
+// Enter inside a PIN field must submit. tview's Form treats Enter as "move to
+// the next element", which silently swallows the key everyone presses after
+// typing a PIN - the lock screen then does nothing at all, and a correct PIN
+// is indistinguishable from a wrong one.
+func TestEnterInAPINFieldSubmits(t *testing.T) {
+	form := tview.NewForm()
+	form.AddPasswordField("PIN", "", 20, '*', nil)
+
+	submitted := 0
+	form.AddButton("Unlock", func() { submitted++ })
+	submitOnEnter(form, func() { submitted++ })
+
+	field := form.GetFormItem(0)
+	press := func(key tcell.Key) {
+		field.InputHandler()(tcell.NewEventKey(key, 0, tcell.ModNone), func(tview.Primitive) {})
+	}
+
+	press(tcell.KeyEnter)
+	if submitted != 1 {
+		t.Fatalf("Enter in the PIN field should have submitted once, got %d", submitted)
+	}
+
+	// Tab must still mean "move on" rather than submit, or there is no way to
+	// reach a second button (Skip, on the setup screen) without triggering the
+	// first one.
+	press(tcell.KeyTab)
+	if submitted != 1 {
+		t.Errorf("Tab must not submit; submit count went to %d", submitted)
+	}
+}
+
+// The button and the Enter key have to run the same code, or one of them
+// drifts and only some users hit the working path.
+func TestEnterAndTheButtonRunTheSameAction(t *testing.T) {
+	form := tview.NewForm()
+	form.AddPasswordField("PIN", "", 20, '*', nil)
+
+	var ran []string
+	action := func() { ran = append(ran, "action") }
+	form.AddButton("Unlock", action)
+	submitOnEnter(form, action)
+
+	form.GetFormItem(0).InputHandler()(
+		tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), func(tview.Primitive) {})
+	form.GetButton(0).InputHandler()(
+		tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), func(tview.Primitive) {})
+
+	if len(ran) != 2 {
+		t.Errorf("Enter and the button should both run the action, got %d run(s)", len(ran))
 	}
 }

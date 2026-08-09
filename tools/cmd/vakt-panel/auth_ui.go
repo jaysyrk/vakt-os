@@ -33,6 +33,33 @@ func authGateRoot(app *tview.Application, mainLayout, focusAfter tview.Primitive
 	return setupScreen(unlock, pinDamaged())
 }
 
+// submitOnEnter makes Enter inside any of the form's input fields run submit.
+//
+// tview's Form treats Enter on a field as "move to the next element", so a
+// PIN form built the obvious way swallows the Enter every person presses
+// after typing: focus shifts to the button and nothing else happens - no
+// attempt, no error message, no counter. The correct PIN looks broken, and on
+// a lock screen that is the difference between getting in and not.
+//
+// The capture goes on the fields rather than the form because the focused
+// primitive is the field itself, and that is what the application hands the
+// event to - a capture on the form would never run.
+func submitOnEnter(form *tview.Form, submit func()) {
+	for i := 0; i < form.GetFormItemCount(); i++ {
+		input, ok := form.GetFormItem(i).(*tview.InputField)
+		if !ok {
+			continue
+		}
+		input.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+			if event.Key() == tcell.KeyEnter {
+				submit()
+				return nil
+			}
+			return event
+		})
+	}
+}
+
 func gateFrame(inner tview.Primitive, innerHeight int) tview.Primitive {
 	banner := tview.NewTextView().
 		SetTextAlign(tview.AlignCenter).
@@ -53,7 +80,8 @@ func lockScreen(unlock func()) tview.Primitive {
 
 	form := tview.NewForm()
 	form.AddPasswordField("PIN", "", 20, '*', nil)
-	form.AddButton("Unlock", func() {
+
+	attempt := func() {
 		pin := form.GetFormItemByLabel("PIN").(*tview.InputField).GetText()
 		if verifyPIN(pin) {
 			unlock()
@@ -62,7 +90,9 @@ func lockScreen(unlock func()) tview.Primitive {
 		attempts++
 		form.GetFormItemByLabel("PIN").(*tview.InputField).SetText("")
 		result.SetText(fmt.Sprintf("[red]Incorrect PIN. (%d attempt(s))[-]", attempts))
-	})
+	}
+	form.AddButton("Unlock", attempt)
+	submitOnEnter(form, attempt)
 	form.SetBorder(true).SetTitle(" Locked ")
 
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).
@@ -93,7 +123,7 @@ func setupScreen(unlock func(), damaged bool) tview.Primitive {
 	form := tview.NewForm()
 	form.AddPasswordField("New PIN", "", 20, '*', nil)
 	form.AddPasswordField("Confirm PIN", "", 20, '*', nil)
-	form.AddButton("Set PIN", func() {
+	save := func() {
 		pin := form.GetFormItemByLabel("New PIN").(*tview.InputField).GetText()
 		confirm := form.GetFormItemByLabel("Confirm PIN").(*tview.InputField).GetText()
 
@@ -110,8 +140,12 @@ func setupScreen(unlock func(), damaged bool) tview.Primitive {
 			return
 		}
 		unlock()
-	})
+	}
+	form.AddButton("Set PIN", save)
 	form.AddButton("Skip (not recommended)", unlock)
+	// Enter saves; Skip stays a deliberate Tab-and-press, which is the right
+	// way round for a step whose whole point is not being breezed past.
+	submitOnEnter(form, save)
 	form.SetBorder(true).SetTitle(" Protect This Panel ")
 
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).

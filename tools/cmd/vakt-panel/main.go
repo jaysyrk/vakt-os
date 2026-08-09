@@ -282,7 +282,7 @@ func main() {
 			return item.(*tview.InputField).GetText()
 		}
 
-		securityForm.AddButton("Set / Change PIN", func() {
+		save := func() {
 			securityResult.Clear()
 			if protected && !verifyPIN(field("Current PIN")) {
 				fmt.Fprint(securityResult, "[red]Current PIN is incorrect.[-]\n")
@@ -303,7 +303,9 @@ func main() {
 			}
 			fmt.Fprint(securityResult, "[green]PIN saved.[-]\n")
 			rebuildSecurityForm()
-		})
+		}
+		securityForm.AddButton("Set / Change PIN", save)
+		submitOnEnter(securityForm, save)
 
 		if protected {
 			securityForm.AddButton("Remove PIN", func() {

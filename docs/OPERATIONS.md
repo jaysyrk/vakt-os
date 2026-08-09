@@ -69,6 +69,11 @@ sudo rm -f /mnt/vakt/etc/vakt-panel.auth
 sudo umount /mnt/vakt
 ```
 
+> **Press Enter and nothing happens?** On builds before this was fixed, Enter
+> in the PIN field only moved focus to the **Unlock** button — no attempt, no
+> error, no counter. Press Enter a second time, or Tab to **Unlock** and press
+> it. A correct PIN looked broken. Current builds submit on the first Enter.
+
 <details>
 <summary>Why a correct PIN can stop working</summary>
 
