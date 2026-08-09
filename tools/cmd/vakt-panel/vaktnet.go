@@ -181,6 +181,21 @@ func idsReport(limit int) string { return idsReportFrom(idsAlerts, limit) }
 func idsReportFrom(path string, limit int) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		// Only a missing file means "nothing has been reported". Any other
+		// error means this page does not know, and saying so in green is the
+		// most dangerous thing it could do: an appliance whose alert file the
+		// panel cannot open would show an all-clear while vakt-ids was busy
+		// recording exactly the findings the operator came here to see.
+		if !os.IsNotExist(err) {
+			return "[red]Cannot read " + path + ": " + err.Error() + "[-]\n\n" +
+				"This is not an all-clear. vakt-ids may be recording findings\n" +
+				"this page cannot see. Check the file from a root shell.\n"
+		}
+		return "[green]No alerts recorded.[-]\n" +
+			"vakt-ids writes findings to " + path + ".\n"
+	}
+
+	if len(strings.TrimSpace(string(data))) == 0 {
 		return "[green]No alerts recorded.[-]\n" +
 			"vakt-ids writes findings to " + path + ".\n"
 	}

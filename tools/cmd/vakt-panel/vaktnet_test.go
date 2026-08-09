@@ -108,3 +108,58 @@ func TestReadKeyValueFileIgnoresJunkLines(t *testing.T) {
 		t.Errorf("expected exactly 2 keys, got %#v", got)
 	}
 }
+
+// An alert file the panel cannot read must never render as an all-clear.
+//
+// vakt-ids runs as root and used to create /run/vakt-ids.alerts as 0600, so
+// the panel - which runs unprivileged - got EACCES and displayed a green "No
+// alerts recorded." on an appliance that may have been recording findings the
+// whole time. Failing safe here means saying "I cannot tell", not "all fine".
+func TestAnUnreadableAlertFileIsNotReportedAsNoAlerts(t *testing.T) {
+	check := func(what, path string) {
+		t.Helper()
+		got := idsReportFrom(path, 10)
+		if strings.Contains(got, "No alerts recorded") {
+			t.Errorf("%s: rendered as an all-clear:\n%s", what, got)
+		}
+		if !strings.Contains(got, "Cannot read") {
+			t.Errorf("%s: should say it cannot read the file:\n%s", what, got)
+		}
+		if !strings.Contains(got, "not an all-clear") {
+			t.Errorf("%s: should say plainly that this is not an all-clear:\n%s", what, got)
+		}
+	}
+
+	// EISDIR rather than EACCES, so the branch is still exercised when the
+	// suite runs as root - which is how CI runs it.
+	dir := filepath.Join(t.TempDir(), "vakt-ids.alerts")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	check("a path that is not a regular file", dir)
+
+	if os.Geteuid() != 0 {
+		denied := filepath.Join(t.TempDir(), "vakt-ids.alerts")
+		if err := os.WriteFile(denied, []byte("2026-01-01\tMODIFIED\t/persistent/etc/passwd\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(denied, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		check("an unreadable file", denied)
+	}
+}
+
+// vakt-init pre-creates the alert file empty so the panel can read it. Empty
+// genuinely means nothing has been reported, and must read as such rather
+// than as one blank alert.
+func TestAnEmptyAlertFileReadsAsNoAlerts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vakt-ids.alerts")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := idsReportFrom(path, 10)
+	if !strings.Contains(got, "No alerts recorded") {
+		t.Errorf("an empty alert file should read as no alerts, got:\n%s", got)
+	}
+}

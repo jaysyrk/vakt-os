@@ -40,6 +40,9 @@ const VAKT_NET_CONF: &str = "/persistent/etc/vakt-net.conf";
 /// `privilege::adopt_file`.
 const VAKT_PANEL_AUTH: &str = "/persistent/etc/vakt-panel.auth";
 
+/// Where vakt-ids records findings, and the panel reads them from.
+const IDS_ALERTS: &str = "/run/vakt-ids.alerts";
+
 /// PID 1's own PATH. Deliberately only the image's own directories: the package
 /// install root is writable by the unprivileged user, and anything reachable
 /// from there must never be a candidate for a program root runs.
@@ -115,6 +118,15 @@ fn main() {
             );
             privilege::grant_console(id);
             privilege::grant(Path::new(&id.home), id);
+            // Created before vakt-ids starts, so the daemon appends to a file
+            // the panel can already read. vakt-ids runs as root and would
+            // otherwise create it 0600 root-owned on its first finding, which
+            // the panel cannot open at all - and an unreadable alert file is
+            // worse than no alert file, because the page renders it as "no
+            // alerts recorded". Not gated on persistent storage: /run is a
+            // tmpfs that exists either way, and an appliance in RAM-only mode
+            // still reports findings.
+            privilege::grant_file(Path::new(IDS_ALERTS), id);
             if persistent {
                 privilege::grant(Path::new(ZRPKG_ROOT), id);
                 privilege::grant(Path::new("/persistent/etc"), id);
