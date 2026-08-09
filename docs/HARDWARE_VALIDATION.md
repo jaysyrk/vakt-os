@@ -9,6 +9,11 @@ Use `VAKT_KERNEL=host` for real hardware — the `custom` monolithic kernel
 carries no Wi-Fi chipset firmware and is meant for QEMU or one fixed, known
 machine (see the README's Building section).
 
+One machine has been through part of this — sections 1, 3 and 7 pass, 2, 5, 6,
+8, 9 and A/B updates are still untested anywhere. Read
+[Results: machine 1](#results-machine-1-2026-08-first-real-hardware-pass)
+before starting; it will save you the five bugs it cost to get that far.
+
 Work through this on hardware you're willing to have wiped: the build writes
 a boot USB and expects a second disk it will `mkfs.ext4` for `/persistent`.
 
@@ -171,3 +176,58 @@ what didn't, and the exact error text for anything that failed) is enough to
 be useful to whoever reads this next. If a class of hardware turns out to be
 unsupported (a storage controller, a Wi-Fi chipset), that's a
 `build-system/kernel.config` change, not a documentation-only fix.
+
+---
+
+## Results: machine 1 (2026-08, first real-hardware pass)
+
+Desktop PC, built on Arch Linux with `VAKT_KERNEL=host`. Boot medium: SanDisk
+USB. Data disk: Seagate 1.8 TB SATA.
+
+**This pass never got past section 4.** Five separate bugs stood between the
+USB booting and the panel staying up, and finding them was the pass. Sections
+2, 5, 6, 8 and the A/B update section remain untested on any real machine.
+
+### What passed
+
+| Section | Result |
+|---|---|
+| 1. Build and media | `sudo ./build.sh` completed; `dd` to USB booted on the target |
+| 3. GRUB menu | Both entries present, both selectable |
+| 7. Keyboard input | Real USB keyboard reached the panel; Tab navigated forms correctly |
+| 7. Framebuffer | Readable at the machine's native resolution, no `ioctl` geometry problem |
+
+### What failed, and what it turned out to be
+
+Each of these presented as the same symptom — the panel opening and closing
+in a loop — which is why they had to be peeled off one at a time.
+
+| Symptom on the machine | Actual cause | Fix |
+|---|---|---|
+| Every module: `invalid ELF header magic` | busybox's `modprobe` applet shadowed real kmod in `PATH`, and modules ship as `.ko.zst` | `build.sh` deletes `/bin/modprobe` after copying kmod |
+| `No disk labeled 'VAKTDATA' found` | `mount_persistent()` ran before `load_modules()`, so no storage driver existed yet | reordered in `vakt-init/src/main.rs` |
+| Disk found on one boot, missing the next | `/dev/sda` was hardcoded; drive letters swapped between boots | label-based lookup, `vakt-init/src/mount.rs` |
+| USB storage still absent after one module pass | one-shot modalias scan missed devices enumerating after their controller | 3-pass module loading |
+| `Could not run Vakt Panel: Permission denied` | **the image root itself shipped 0700** — `mktemp -d`'s mode ended up on the cpio's `.` entry, and the kernel chmods the real `/` to match, so the panel's unprivileged user couldn't traverse `/` | `chmod 755 "$ROOTFS"` before packing |
+
+Two more surfaced while working around the above:
+
+- The recovery GRUB entry still asked for a PIN. `vakt.rootshell` only changed
+  which user got the *fallback* shell; it never skipped the panel. It now
+  returns before the panel starts.
+- `Could not save PIN: read-only file system` on the setup screen — correct
+  behaviour with `/persistent` unmounted, but worth knowing it's what a
+  storage failure looks like from the panel.
+
+### Notes for the next machine
+
+- Kernel modules are `.ko.zst`. Anything that loads modules must be real kmod;
+  busybox's applet cannot read them.
+- `/dev/sda` was the internal SATA disk on this machine and the USB on
+  another. Never assume a device name — that's why the lookup is by label.
+- Section 9 (shutdown) is untested: the power button appeared dead, but only
+  while the appliance was already in the crash loop, so it proves nothing
+  about the normal path.
+- The console-loop backoff message added during this pass (`vakt-init` prints
+  the exit status in red after 3 fast rounds) is what made the last two bugs
+  legible. Read it before guessing.
