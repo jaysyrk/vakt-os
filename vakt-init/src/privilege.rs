@@ -176,11 +176,21 @@ pub fn grant_console(identity: &Identity) {
         if !path.exists() {
             continue;
         }
-        let _ = chown(
+        // Reported rather than ignored: if /dev/console in particular cannot
+        // be handed over, the panel and the fallback shell both fail to open
+        // a terminal and exit immediately, which looks like a crash loop with
+        // no stated cause. Better to name it here than to leave it to be
+        // inferred from the loop.
+        if let Err(e) = chown(
             path,
             Some(Uid::from_raw(identity.uid)),
             Some(Gid::from_raw(identity.gid)),
-        );
+        ) {
+            println!(
+                "[Vakt-Init] \x1b[1;33mCould not give {} to {}: {}\x1b[0m",
+                device, identity.name, e
+            );
+        }
     }
 }
 

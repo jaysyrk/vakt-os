@@ -49,6 +49,17 @@ const READY_TIMEOUT: Duration = Duration::from_secs(10);
 /// recovering an image whose panel will not start.
 const ROOT_SHELL_FLAG: &str = "vakt.rootshell";
 
+/// A console round (panel, then fallback shell) finishing faster than this
+/// means neither ever got going - nobody read a menu or typed at a prompt in
+/// under a second.
+const FUTILE_ROUND: Duration = Duration::from_secs(1);
+/// How many futile rounds to allow before slowing down and explaining.
+const FUTILE_ROUNDS_BEFORE_BACKOFF: u32 = 3;
+/// Ceiling on the wait between futile rounds. Long enough that the console
+/// stays readable, short enough that a transient problem still recovers
+/// without a reboot.
+const FUTILE_BACKOFF: Duration = Duration::from_secs(30);
+
 fn main() {
     unsafe {
         env::set_var("PATH", SYSTEM_PATH);
@@ -188,7 +199,15 @@ fn console_loop(identity: Option<&Identity>, persistent: bool) {
         identity
     };
 
+    // Consecutive rounds where both the panel and the fallback shell gave up
+    // immediately. Without this the loop spins as fast as the two execs
+    // return: the console fills faster than it can be read, the reason
+    // scrolls away, and the machine looks hung when it is actually retrying.
+    let mut futile_rounds: u32 = 0;
+
     while !shutdown::under_way() {
+        let round_started = std::time::Instant::now();
+
         println!("[Vakt-Init] Launching Vakt Panel...");
         // Absolute path, not "vakt-panel": the console session's PATH puts
         // the zrpkg install root first (see session_environment) so an
@@ -197,20 +216,85 @@ fn console_loop(identity: Option<&Identity>, persistent: bool) {
         // usr/bin/vakt-panel silently replace the real panel on every future
         // launch. cttyhack's own exec only consults PATH for a name with no
         // '/' in it, so a literal absolute path bypasses that lookup.
-        let _ = run_on_console(&["/usr/bin/vakt-panel"], identity, &session);
+        let panel = run_on_console(&["/usr/bin/vakt-panel"], identity, &session);
+        report_exit("Vakt Panel", &panel);
 
         if shutdown::under_way() {
             break;
         }
 
         println!("[Vakt-Init] Panel exited. Dropping to a shell...");
-        let _ = run_on_console(&["/bin/sh"], shell_identity, &session);
+        let shell = run_on_console(&["/bin/sh"], shell_identity, &session);
+        report_exit("Shell", &shell);
+
+        // A round where the panel and the shell both came straight back is a
+        // console the console session cannot use - most often /dev/console
+        // not being openable by the user they run as. Retrying instantly
+        // just hides the reason, so slow down and say so plainly.
+        if round_started.elapsed() < FUTILE_ROUND {
+            futile_rounds += 1;
+        } else {
+            futile_rounds = 0;
+        }
+
+        if futile_rounds >= FUTILE_ROUNDS_BEFORE_BACKOFF {
+            let pause = FUTILE_BACKOFF.min(Duration::from_secs(1 << (futile_rounds.min(5))));
+            println!(
+                "\n[Vakt-Init] \x1b[1;31mNeither the panel nor a shell will stay on this \
+                 console ({} rounds).\x1b[0m",
+                futile_rounds
+            );
+            match identity {
+                Some(id) => println!(
+                    "[Vakt-Init] They run as '{}' (uid {}). If /dev/console is not \
+                     openable by that user this is what it looks like.",
+                    id.name, id.uid
+                ),
+                None => println!("[Vakt-Init] They run as root."),
+            }
+            println!(
+                "[Vakt-Init] Boot the 'Vakt OS (root recovery shell)' GRUB entry to \
+                 investigate; retrying in {}s.\n",
+                pause.as_secs()
+            );
+            std::thread::sleep(pause);
+        }
     }
 
     // Shutdown is in progress on the signal thread and ends in reboot(2).
     // Returning from main would kill PID 1 and panic the kernel, so wait here.
     loop {
         std::thread::park();
+    }
+}
+
+/// Says how a console program ended, rather than discarding it.
+///
+/// The exit status is the only evidence there is about why the panel would
+/// not stay up: the panel draws over the screen, so anything it printed on
+/// the way out is usually gone by the time anyone looks. A status of 1 with
+/// no output is a very different problem from a signal.
+fn report_exit(what: &str, result: &std::io::Result<ExitStatus>) {
+    use std::os::unix::process::ExitStatusExt;
+
+    match result {
+        Ok(status) => {
+            if status.success() {
+                println!("[Vakt-Init] {} exited normally.", what);
+            } else if let Some(signal) = status.signal() {
+                println!(
+                    "[Vakt-Init] \x1b[1;33m{} was killed by signal {}.\x1b[0m",
+                    what, signal
+                );
+            } else {
+                println!(
+                    "[Vakt-Init] \x1b[1;33m{} exited with status {}.\x1b[0m",
+                    what,
+                    status.code().unwrap_or(-1)
+                );
+            }
+        }
+        Err(e) => println!("[Vakt-Init] \x1b[1;31mCould not run {}: {}\x1b[0m", what, e),
     }
 }
 
