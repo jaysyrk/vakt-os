@@ -211,3 +211,47 @@ func TestEnterAndTheButtonRunTheSameAction(t *testing.T) {
 		t.Errorf("Enter and the button should both run the action, got %d run(s)", len(ran))
 	}
 }
+
+// An auth file the panel cannot read is not an appliance without a PIN.
+//
+// This is the failure that actually shipped: the file was written while the
+// panel was running as root, stayed 0600 root-owned, and every later boot ran
+// the panel as an unprivileged user that got EACCES. Reporting that as
+// pinAbsent showed an ordinary first-boot setup screen and rejected the
+// correct PIN with nothing on screen to explain why.
+func TestAnUnreadableAuthFileIsNotReportedAsNoPIN(t *testing.T) {
+	check := func(what, path string) {
+		t.Helper()
+		if got := storedPIN(path); got != pinUnusable {
+			t.Errorf("%s: should be pinUnusable, got %v", what, got)
+		}
+		if !pinDamagedAt(path) {
+			t.Errorf("%s: the setup screen must say the stored PIN could not be read", what)
+		}
+		if hasPINAt(path) {
+			t.Errorf("%s: must not serve a lock screen nothing can open", what)
+		}
+	}
+
+	// EISDIR rather than EACCES, so this still exercises the branch when the
+	// suite runs as root - which is exactly where a permissions fixture would
+	// quietly skip and stop guarding anything.
+	dir := filepath.Join(t.TempDir(), "vakt-panel.auth")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	check("a path that is not a regular file", dir)
+
+	// The real shape: a 0600 file owned by someone else. Root bypasses file
+	// permissions, so this half only means anything unprivileged.
+	if os.Geteuid() != 0 {
+		denied := filepath.Join(t.TempDir(), "vakt-panel.auth")
+		if err := setPINAt(denied, "1234"); err != nil {
+			t.Fatalf("setPINAt: %v", err)
+		}
+		if err := os.Chmod(denied, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		check("an unreadable file", denied)
+	}
+}

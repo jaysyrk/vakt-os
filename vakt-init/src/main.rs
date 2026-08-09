@@ -35,6 +35,11 @@ const ZRPKG_ROOT: &str = "/persistent/zrpkg";
 /// Landlock ruleset has a path to name. See `privilege::grant_file`.
 const VAKT_NET_CONF: &str = "/persistent/etc/vakt-net.conf";
 
+/// The panel's stored PIN. Must belong to the panel's user, which it will not
+/// if it was written by a panel that was running as root. See
+/// `privilege::adopt_file`.
+const VAKT_PANEL_AUTH: &str = "/persistent/etc/vakt-panel.auth";
+
 /// PID 1's own PATH. Deliberately only the image's own directories: the package
 /// install root is writable by the unprivileged user, and anything reachable
 /// from there must never be a candidate for a program root runs.
@@ -117,6 +122,11 @@ fn main() {
                 // Landlock ruleset can name a path that already exists - and
                 // owned by the panel's user, so the panel can rewrite it.
                 privilege::grant_file(Path::new(VAKT_NET_CONF), id);
+                // Adopted, never created: an auth file written while the panel
+                // was running as root stays root-owned and 0600 forever, and
+                // the panel then cannot read the PIN it is meant to check
+                // against - so it reports no PIN and refuses the correct one.
+                privilege::adopt_file(Path::new(VAKT_PANEL_AUTH), id);
             }
         }
         None => println!(

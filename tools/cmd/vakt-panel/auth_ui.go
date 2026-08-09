@@ -114,9 +114,11 @@ func setupScreen(unlock func(), damaged bool) tview.Primitive {
 		"shutdown. Set one now, or skip and set it later from the\n" +
 		"Panel Lock page.[-]"
 	if damaged {
-		message = "[red]The stored PIN could not be read - the file is there but is\n" +
-			"not usable, so no PIN would ever have unlocked it. It is being\n" +
-			"treated as unset. Set a new one now; the old one is gone.[-]"
+		message = "[red]The stored PIN could not be read. The file is there but this\n" +
+			"panel cannot use it - unreadable, or not owned by this account -\n" +
+			"so no PIN would ever have unlocked it. Setting one now replaces\n" +
+			"it. Check ownership from a root shell first if you want the old\n" +
+			"one back: /persistent/etc/vakt-panel.auth[-]"
 	}
 	notice := tview.NewTextView().SetDynamicColors(true).SetText(message)
 

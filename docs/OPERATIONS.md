@@ -91,6 +91,21 @@ A healthy file is one line, 32 hex characters, a colon, then 64 more:
 cat /persistent/etc/vakt-panel.auth
 ```
 
+**Or the file is fine and the panel just cannot read it.** It must be owned by
+the panel's user, not by root — a PIN set while the panel was running as root
+stays root-owned and 0600, and the panel then gets `Permission denied` on
+every check. Current builds adopt it at boot and say so in red if they can't;
+older ones showed an ordinary setup screen and refused the correct PIN with no
+explanation.
+
+```bash
+stat -c 'uid=%u gid=%g mode=%a' /persistent/etc/vakt-panel.auth   # want uid=1000
+chown vakt:vakt /persistent/etc/vakt-panel.auth                   # from a root shell
+```
+
+Off the appliance, with the disk mounted elsewhere, `chown 1000:1000` on the
+same file does the same thing — the PIN itself is unaffected.
+
 </details>
 
 > Anyone with physical access can do all of the above. That's deliberate —

@@ -110,13 +110,6 @@ pub fn grant(path: &Path, identity: &Identity) {
     }
 }
 
-/// Hands the console devices to the unprivileged user.
-///
-/// Without this the panel starts as `vakt` and immediately fails to open a
-/// terminal: devtmpfs creates `/dev/console` owned by root with mode 0600, and
-/// `cttyhack` needs to open it to give the panel a controlling tty. `/dev/fb0`
-/// is here for the same reason - the compositor the panel launches writes to it
-/// directly.
 /// Creates `path` if it is missing and hands it to `identity`.
 ///
 /// Unlike [`grant`], this is for a single file the unprivileged panel has to
@@ -162,6 +155,43 @@ pub fn grant_file(path: &Path, identity: &Identity) {
     }
 }
 
+/// Hands an *existing* file to `identity`, and does nothing if it is absent.
+///
+/// Unlike [`grant_file`], this never creates the file. That difference is the
+/// whole point for the panel's stored PIN: an empty file there is not "no PIN
+/// set", it is "a PIN that cannot be parsed", which makes the panel announce
+/// that the old PIN is gone on an appliance that never had one.
+///
+/// It exists because `chown` on a directory does not recurse, so
+/// `grant("/persistent/etc")` leaves a root-owned file inside it root-owned.
+/// A 0600 file the panel's user cannot read is one the panel treats as no PIN
+/// at all - so a correct PIN is rejected forever, with no way to tell from the
+/// console that ownership is what went wrong.
+pub fn adopt_file(path: &Path, identity: &Identity) {
+    if !path.exists() {
+        return;
+    }
+    if let Err(e) = chown(
+        path,
+        Some(Uid::from_raw(identity.uid)),
+        Some(Gid::from_raw(identity.gid)),
+    ) {
+        println!(
+            "[Vakt-Init] \x1b[1;33mCould not give {} to {}: {}\x1b[0m",
+            path.display(),
+            identity.name,
+            e
+        );
+    }
+}
+
+/// Hands the console devices to the unprivileged user.
+///
+/// Without this the panel starts as `vakt` and immediately fails to open a
+/// terminal: devtmpfs creates `/dev/console` owned by root with mode 0600, and
+/// `cttyhack` needs to open it to give the panel a controlling tty. `/dev/fb0`
+/// is here for the same reason - the compositor the panel launches writes to it
+/// directly.
 pub fn grant_console(identity: &Identity) {
     const DEVICES: &[&str] = &[
         "/dev/console",
@@ -204,6 +234,43 @@ mod tests {
     /// panel's user. The chown itself needs privileges this test suite does
     /// not have, so what is pinned here is the part that always holds:
     /// creation, mode, and that an existing file is never clobbered.
+    /// adopt_file must never create the file it is handed.
+    ///
+    /// grant_file creates a missing file on purpose, for a config the panel
+    /// rewrites in place. Doing that to the panel's stored PIN would leave an
+    /// empty file, which the panel reads as a PIN it cannot parse - so a brand
+    /// new appliance would announce that its old PIN is gone.
+    #[test]
+    fn adopt_file_leaves_a_missing_file_missing() {
+        let dir = std::env::temp_dir().join(format!("vakt-init-adopt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vakt-panel.auth");
+
+        let identity = Identity {
+            name: "vakt".to_string(),
+            uid: nix::unistd::Uid::current().as_raw(),
+            gid: nix::unistd::Gid::current().as_raw(),
+            home: dir.to_string_lossy().into_owned(),
+        };
+
+        adopt_file(&path, &identity);
+        assert!(
+            !path.exists(),
+            "adopt_file created a file; an empty one reads as a damaged PIN"
+        );
+
+        std::fs::write(&path, "salt:digest\n").unwrap();
+        adopt_file(&path, &identity);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "salt:digest\n",
+            "adopt_file must not rewrite the stored PIN"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn grant_file_creates_a_private_file_without_clobbering_an_existing_one() {
         use std::os::unix::fs::PermissionsExt;
