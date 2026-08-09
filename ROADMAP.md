@@ -64,8 +64,9 @@
   - [ ] Independent/third-party review before this runs anything that matters. *(out of scope for a solo project - needs an outside reviewer.)*
 - [x] **Operator Documentation**
   - [x] An incident-response runbook, a key-rotation procedure, and steps for recovering a bricked appliance.
-- [ ] **Real Hardware Validation** — deliberately deferred, see notes below.
-  - [ ] CI only proves the ISO builds and boots in a container/QEMU; physical NICs, Wi-Fi chipsets, storage controllers and Secure Boot still need testing on real machines.
+- [ ] **Real Hardware Validation** — started, partial. See notes below.
+  - [x] One machine boots, mounts its data disk, and reaches the panel — the pass that found five boot bugs (see [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md#results-machine-1-2026-08-first-real-hardware-pass)).
+  - [ ] Secure Boot, wired and Wi-Fi networking, package install, IDS alerting and shutdown are untested on any real machine.
 
 ---
 
@@ -185,12 +186,14 @@ it on real hardware: [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md#o
   the same trade-off this would be protecting against. Root-only file
   permissions stay, and the reasoning is now explicit in the README's
   Security model section rather than an unexplained gap.
-- **Real hardware validation.** CI proves the ISO builds and boots under
-  QEMU. Physical NICs, Wi-Fi chipsets, storage controllers, and Secure Boot
-  behavior can only be validated on real machines, which this environment
-  does not have access to. This is the one item on the list that isn't a
-  design question at all - it just needs someone with the hardware to run
-  the ISO and report back. [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md)
-  is the checklist for that pass, covering Secure Boot, boot sequence,
-  storage controller detection, wired/Wi-Fi networking, panel input,
-  package install, IDS alerting, and shutdown - not just "did it boot."
+- **Real hardware validation is partial, and it mattered.** One machine has
+  now been through sections 1, 3 and 7 of the checklist. It found five bugs
+  QEMU never would have - a busybox `modprobe` applet that cannot read
+  `.ko.zst` modules, storage mounted before drivers were loaded, a hardcoded
+  `/dev/sda`, a one-shot module scan that missed late-enumerating USB
+  storage, and an image root shipped as 0700 because `mktemp -d`'s mode
+  ended up on the cpio's `.` entry. All five presented identically, as a
+  panel crash loop. Secure Boot, wired and Wi-Fi networking, package
+  install, IDS alerting and shutdown remain untested anywhere.
+  [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md) is the
+  checklist and now carries the results so far.
