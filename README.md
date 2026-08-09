@@ -4,133 +4,170 @@
 
 **Claude was used solely for .md formats, .sh scripts, and git push automation**
 
-A Linux security appliance built from scratch — custom init, package manager,
-TUI panel, service supervisor, and framebuffer compositor, in Rust, Go, and
-Zig. No systemd, no glibc userland, no distro underneath: a static busybox
-rootfs, a Rust PID 1, and the tools in this repository.
+A Linux security appliance built from scratch. Custom init, package manager,
+TUI panel, service supervisor, framebuffer compositor — in Rust, Go, and Zig.
 
-```
-GRUB → vmlinuz → initramfs → /init (vakt-init, Rust, PID 1)
-                                ├── mounts /proc /sys /dev, tmpfs over /run and /tmp
-                                ├── mounts the disk labeled VAKTDATA → /persistent
-                                ├── remounts / read-only
-                                ├── supervises vakt-net (Wi-Fi/DHCP) and vakt-ids (integrity)
-                                └── drops to uid 1000, runs vakt-panel (TUI)
-                                          └── vakt-compositor (/dev/fb0)
-```
+**No systemd. No glibc userland. No distro underneath.** Just a static busybox
+rootfs, a Rust PID 1, and the tools in this repo.
 
-## Components
+---
 
-| Component | Language | Role |
-|---|---|---|
-| `vakt-init` | Rust | PID 1: mount, seal root, supervise, drop privilege, shut down. |
-| `vakt-net` | Rust | Wi-Fi/DHCP, Landlock sandboxed. |
-| `vakt-ids` | Go | Filesystem integrity monitor. |
-| `vakt-panel` | Go | PIN-protected TUI, runs unprivileged. |
-| `vakt-audit` | Go | CIS-style compliance checks. |
-| `vakt-compositor` | Rust | Draws to `/dev/fb0` via mmap, Landlock sandboxed. |
-| `zrpkg` | Rust | Package manager: resolve, fetch, verify, install, remove. |
-| `zrpkg-server` | Go | HTTP repository server, rate-limited. |
-| `vakt-verify` | Zig | Independent, from-scratch signature re-check. |
-| `vakt-update` | Rust | A/B OS image updates, unvalidated on real hardware — see [docs/OS_UPDATES.md](docs/OS_UPDATES.md). |
+## Status — read this first
 
-## Security model
+| | |
+|---|---|
+| **Boots and runs?** | Yes — on real hardware, as of the latest build |
+| **Safe for real use?** | **Not yet.** No independent security review |
+| **A/B OS updates** | Written, never survived a real reboot — [details](docs/OS_UPDATES.md) |
+| **Hardware coverage** | One machine. [Checklist here](docs/HARDWARE_VALIDATION.md) |
 
-- **Read-only root.** `/` is remounted `ro` after boot. `/run`/`/tmp` are
-  size-capped tmpfs; `/persistent` is the data disk.
-- **Panel runs unprivileged.** `vakt-init` drops to uid 1000 before launching
-  it, and verifies uid 0 is unreachable afterward. `vakt.rootshell` on the
-  kernel command line gives a recovery shell if the panel won't start.
-- **PIN-protected panel.** A PIN is required before the menu appears — set on
-  first boot, changed from the Panel Lock page.
-- **Landlock sandboxing.** `vakt-compositor` can reach only `/dev/fb0`.
-  `vakt-net` can reach only its own config file under `/persistent`.
-- **Signed packages only.** `zrpkg` refuses anything that doesn't verify
-  against `/etc/vakt/trusted.key` — no warn-and-continue path.
-- **Independent signature check.** `vakt-verify` re-implements the same check
-  in Zig, no code shared with `zrpkg`, and the build fails if they disagree.
-- **Boot-time kernel hardening.** `vakt-init` applies hardening sysctls
-  (`ptrace_scope`, `kptr_restrict`, `rp_filter`, etc.) at startup.
-- **Wi-Fi credentials are plaintext at rest, deliberately.** The PSK in
-  `/persistent/etc/vakt-net.conf` is protected by root-only file permissions,
-  not encryption — `vakt-net` needs it at boot, before the panel PIN (the
-  device's only real secret) exists, so no unattended-boot-compatible key is
-  available to encrypt it with. This is the same trade-off as
-  `vakt.rootshell`: physical console access already gets you root. See
-  [ROADMAP.md](ROADMAP.md) for the fuller reasoning.
+> **Treat this as a working prototype, not a product.** It does what it says,
+> but nobody outside the project has audited it.
 
-## Building
+---
 
-Requires an Arch host (uses `pacman`) and root.
+## Try it in a VM (5 minutes)
+
+Needs an **Arch host** with root (the build uses `pacman`).
 
 ```bash
-sudo ./build.sh
-```
+sudo ./build.sh                          # 1. build the ISO
+./tools/bin/zrpkg-server -dir tools/repo &   # 2. serve packages
 
-Two kernel modes:
-
-| | `VAKT_KERNEL=host` (default) | `VAKT_KERNEL=custom` |
-|---|---|---|
-| Kernel/modules | Build machine's own | Built from `build-system/kernel.config`, monolithic |
-| Hardware | Whatever the host supports | QEMU, common wired NICs, NVMe/AHCI, USB — no Wi-Fi |
-
-Use `host` on (or near) the machine you're deploying to. Use `custom` for a
-VM or one fixed, known machine:
-
-```bash
-sudo VAKT_KERNEL=custom ./build.sh
-sudo VAKT_REPO_URL=https://packages.example.com ./build.sh   # bake in a repo URL
-```
-
-`vakt-data.img` is not recreated if it already exists — it holds Wi-Fi
-credentials, packages, and the IDS baseline. Delete it to start clean.
-
-## Running
-
-**In a VM:**
-
-```bash
-./tools/bin/zrpkg-server -dir tools/repo
 qemu-system-x86_64 -m 2G -enable-kvm \
     -drive file=vakt-data.img,format=raw,index=0,media=disk \
     -cdrom vakt-os.iso \
     -netdev user,id=n0 -device e1000,netdev=n0
 ```
 
-**On real hardware:**
+That's it. You'll land on a PIN setup screen, then the panel.
+
+---
+
+## Put it on real hardware
+
+You need **two drives**: one to boot from, one for data. They can't be the
+same drive.
+
+**1. Build it** — use the default `host` kernel for real hardware:
 
 ```bash
-sudo dd if=vakt-os.iso of=/dev/sdX bs=4M status=progress conv=fsync   # boot USB
-sudo mkfs.ext4 -L VAKTDATA /dev/sdY                                   # persistent disk
+sudo ./build.sh
 ```
 
-The `VAKTDATA` label isn't optional on real hardware the way it's harmless in
-a VM: GRUB finds the persistent disk by filesystem label (it doesn't use
-Linux device names like `/dev/sda`), and the A/B update mechanism
-([docs/OS_UPDATES.md](docs/OS_UPDATES.md)) depends on it being findable that
-way. An unlabeled disk still works for everything else; it just can't be
-found by GRUB for an OS update.
+**2. Find your drives.** Letters move between reboots, so check every time:
 
-Disable Secure Boot (GRUB here isn't signed for it). Point `zrpkg` at a real
-repository — there's no QEMU gateway on real hardware.
-
-## Networking
-
-`vakt-net` runs in the background: DHCP on `eth0` with no config, or Wi-Fi if
-`/persistent/etc/vakt-net.conf` exists (set from the panel's Wi-Fi Setup
-page):
-
-```ini
-ssid=MyNetwork
-psk=hunter2
-interface=wlan0
+```bash
+lsblk -o NAME,SIZE,MODEL,TRAN,LABEL
 ```
 
-Wi-Fi needs `VAKT_KERNEL=host` — `custom` has no chipset firmware.
+**3. Write the boot USB** — replace `sdX`:
 
-## Packages
+```bash
+sudo dd if=vakt-os.iso of=/dev/sdX bs=4M status=progress conv=fsync
+```
+
+**4. Format the data drive** — replace `sdY`, and **keep the label**:
+
+```bash
+sudo mkfs.ext4 -L VAKTDATA /dev/sdY
+```
+
+> **The `VAKTDATA` label is not optional.** GRUB and `vakt-init` both find the
+> data disk by label, never by device name — device letters aren't stable.
+> Get this wrong and the appliance silently boots into RAM-only mode.
+
+**5. Boot it.** Hit your boot-menu key (`F12` / `F10` / `Esc`), pick the USB.
+
+> **Turn Secure Boot off.** GRUB here isn't signed for it.
+
+---
+
+## If something goes wrong
+
+| Symptom | Do this |
+|---|---|
+| Forgot the PIN | Boot the **root recovery shell** GRUB entry → `rm -f /persistent/etc/vakt-panel.auth` |
+| Stuck in a launch/exit loop | It backs off after 3 tries and prints why — read the red text |
+| `/persistent` not mounting | Check the data disk really has the `VAKTDATA` label |
+| Panel won't start at all | Recovery shell entry always skips the panel |
+
+Full runbook: **[docs/OPERATIONS.md](docs/OPERATIONS.md)**
+
+---
+
+## How it boots
 
 ```
+GRUB → vmlinuz → initramfs → /init  (vakt-init, Rust, PID 1)
+                                ├── mounts /proc /sys /dev, tmpfs over /run and /tmp
+                                ├── loads hardware drivers
+                                ├── mounts the disk labeled VAKTDATA → /persistent
+                                ├── remounts / read-only
+                                ├── supervises vakt-net + vakt-ids
+                                └── drops to uid 1000, runs vakt-panel (TUI)
+                                          └── vakt-compositor (/dev/fb0)
+```
+
+---
+
+## What's in it
+
+| Component | Lang | Does what |
+|---|---|---|
+| `vakt-init` | Rust | PID 1: mount, seal root, supervise, drop privilege, shut down |
+| `vakt-net` | Rust | Wi-Fi/DHCP, Landlock sandboxed |
+| `vakt-ids` | Go | Filesystem integrity monitor |
+| `vakt-panel` | Go | PIN-protected TUI, runs unprivileged |
+| `vakt-audit` | Go | CIS-style compliance checks |
+| `vakt-compositor` | Rust | Draws to `/dev/fb0` via mmap, Landlock sandboxed |
+| `zrpkg` | Rust | Packages: resolve, fetch, verify, install, remove |
+| `zrpkg-server` | Go | HTTP repo server, rate-limited |
+| `vakt-verify` | Zig | Independent, from-scratch signature re-check |
+| `vakt-update` | Rust | A/B image updates — [unvalidated](docs/OS_UPDATES.md) |
+
+---
+
+## Security model
+
+The five things this project exists to demonstrate:
+
+1. **Read-only root.** `/` is remounted `ro` after boot.
+2. **Panel runs unprivileged.** Drops to uid 1000, then verifies uid 0 is
+   genuinely unreachable.
+3. **Landlock sandboxing.** The compositor reaches only `/dev/fb0`; the
+   network daemon only its own config.
+4. **Signed packages only.** No warn-and-continue path. Ever.
+5. **Independent second check.** `vakt-verify` re-implements signature
+   verification in Zig, shares no code with `zrpkg`, and the build fails if
+   the two disagree.
+
+Plus: boot-time kernel hardening sysctls, and a PIN gate on the panel.
+
+<details>
+<summary><b>Known trade-offs (click)</b></summary>
+
+- **Physical access wins.** The `vakt.rootshell` GRUB entry hands out a root
+  shell. That's deliberate — it's the recovery path for a forgotten PIN. The
+  PIN defends against a passer-by, not against someone with a screwdriver.
+- **Wi-Fi password is plaintext at rest**, protected by root-only file
+  permissions rather than encryption. `vakt-net` needs it at boot, before the
+  PIN (the only real secret) has been entered — so there's no key available to
+  encrypt it with that wouldn't break unattended boot. Reasoning in
+  [ROADMAP.md](ROADMAP.md).
+- **No independent review yet.** Everything found so far was found from
+  inside the project.
+
+</details>
+
+---
+
+## Everyday tasks
+
+<details>
+<summary><b>Packages</b></summary>
+
+```bash
 zrpkg update              # list what's available
 zrpkg install <name>      # resolve, fetch, verify, install
 zrpkg verify <name>       # check signature without installing
@@ -138,72 +175,104 @@ zrpkg remove <name>       # delete exactly what was installed
 zrpkg repo <url>          # change the repository
 ```
 
-Installs go to `/persistent/zrpkg`. Dependencies are resolved and installed
-in order. Removal is refused if another package still depends on it
-(`--force` to override).
+Installs land in `/persistent/zrpkg`. Dependencies resolve automatically.
+Removal is refused while something still depends on it (`--force` overrides).
 
-Build and sign the repository:
+Build and sign a repository:
 
 ```bash
 ./build-system/mkrepo.sh
 ```
 
-Generates a signing key on first run (`build-system/keys/repo.key`,
-gitignored), signs every package, and re-checks each one with `vakt-verify`
-before publishing.
+First run generates a signing key at `build-system/keys/repo.key` (gitignored,
+mode 0600). Every package is signed, then independently re-checked with
+`vakt-verify` before it's published.
 
-**Remote repositories** — point at a rented server instead of the QEMU
-default:
+Publish to a rented server:
 
 ```bash
 zrpkg repo https://packages.example.com
 ./deploy/publish.sh user@vps.example.com
 ```
 
-See [`deploy/README.md`](deploy/README.md) for the systemd unit, TLS, and
-rate limiting.
+See [`deploy/README.md`](deploy/README.md) for the systemd unit, TLS, and rate
+limiting.
 
-## OS updates
+</details>
 
-> **Unvalidated on real hardware** — implemented and tested everywhere except
-> an actual reboot. Read [docs/OS_UPDATES.md](docs/OS_UPDATES.md) before
-> relying on this for anything you can't recover by hand.
+<details>
+<summary><b>Wi-Fi</b></summary>
 
-An A/B mechanism for updating the kernel and image itself, not just `zrpkg`
-packages — the boot medium (slot A) is never touched; an update lands as
-slot B on `/persistent`, and vakt-init rolls back to slot A on its own if
-slot B never reaches a working boot.
+Set it from the panel's **Wi-Fi Setup** page, or write
+`/persistent/etc/vakt-net.conf` by hand:
+
+```ini
+ssid=MyNetwork
+psk=hunter2
+interface=wlan0
+```
+
+With no config at all, `vakt-net` just does DHCP on `eth0`.
+
+> Wi-Fi needs `VAKT_KERNEL=host`. The `custom` kernel carries no chipset
+> firmware, on purpose.
+
+</details>
+
+<details>
+<summary><b>Backups</b></summary>
+
+Both ship inside the image, so they work with no network and no extra tooling:
+
+```bash
+vakt-backup  /persistent /mnt/usb/backup-$(date +%F).tar.gz
+vakt-restore /mnt/usb/backup-2026-08-07.tar.gz /persistent
+```
+
+Restore verifies a SHA-256 checksum before touching anything, and refuses a
+destination that isn't empty.
+
+</details>
+
+<details>
+<summary><b>OS updates (unvalidated)</b></summary>
+
+> **Never survived a real reboot.** Read [docs/OS_UPDATES.md](docs/OS_UPDATES.md)
+> before using this on anything you can't recover by hand.
+
+A/B updates for the kernel and image itself, not just packages. The boot
+medium (slot A) is never written to; an update lands as slot B on
+`/persistent`, and `vakt-init` rolls back on its own if slot B never reaches a
+working boot.
 
 ```bash
 sudo ./build-system/mkupdate.sh 1.1.0   # build + sign a new slot B
-vakt-update check                       # on the appliance: what's available
-vakt-update apply --reboot              # fetch, verify, stage, reboot into it
+vakt-update check                       # on the appliance
+vakt-update apply --reboot
 ```
 
-## Layout
+</details>
 
+---
+
+## Build options
+
+| | `VAKT_KERNEL=host` *(default)* | `VAKT_KERNEL=custom` |
+|---|---|---|
+| Kernel | The build machine's own | Built from `build-system/kernel.config` |
+| Hardware | Whatever the host supports | QEMU, common wired NICs, NVMe/AHCI, USB |
+| Wi-Fi | Yes | **No** — no firmware blobs |
+| Use it for | Real hardware | A VM, or one fixed known machine |
+
+```bash
+sudo VAKT_KERNEL=custom ./build.sh
+sudo VAKT_REPO_URL=https://packages.example.com ./build.sh   # bake in a repo URL
 ```
-build.sh                    Full ISO build
-build-system/mkkernel.sh    Builds the monolithic kernel
-build-system/mkrepo.sh      Builds and signs the package repository
-build-system/mkupdate.sh    Builds and signs an A/B update bundle (slot B)
-pkg-manager/                zrpkg (Rust)
-vakt-init/                  PID 1, supervisor, readiness, shutdown (Rust)
-vakt-net/                   Networking daemon (Rust)
-vakt-compositor/            Framebuffer compositor (Rust)
-vakt-verify/                Independent signature verifier (Zig)
-vakt-update/                A/B OS image updater (Rust) - see docs/OS_UPDATES.md
-tools/cmd/                  Go tools: panel, audit, ids, repo server
-tools/vakt-backup           Backs up /persistent (ships in the image)
-tools/vakt-restore          Restores a vakt-backup archive (ships in the image)
-pkg-manager/fuzz/           cargo-fuzz targets for untrusted-input parsing
-deploy/                     Running the repository on a rented server
-docs/OPERATIONS.md          Runbook: lockouts, crash loops, IDS alerts, backups
-docs/SECURITY_AUDIT.md      Unsafe-block review and fuzzing notes
-docs/HARDWARE_VALIDATION.md Checklist for testing a build on real hardware
-docs/OS_UPDATES.md          A/B update design - implemented, unvalidated on real hardware
-.github/workflows/build.yml CI: tests, package pipeline, ISO artifact
-```
+
+> `vakt-data.img` is never recreated if it already exists — it holds your
+> Wi-Fi credentials, packages, and IDS baseline. Delete it to start clean.
+
+---
 
 ## Tests
 
@@ -216,13 +285,40 @@ cd tools && go test ./cmd/...
 cd vakt-verify && zig build test
 ```
 
-CI runs all of these, then a full package pipeline (pack, sign, install,
-tamper detection), then builds the ISO and, separately, builds and applies a
-signed A/B update bundle end to end against a local repository (see
-[docs/OS_UPDATES.md](docs/OS_UPDATES.md) for what that does and doesn't
-prove). Tagging `v*` publishes the ISO as a release asset.
+CI runs all of that, then a full package pipeline (pack → sign → install →
+tamper detection), then builds the ISO, then builds and applies a signed A/B
+update bundle end to end. Tagging `v*` publishes the ISO as a release asset.
 
-## Third-party components
+<details>
+<summary><b>Repo layout</b></summary>
+
+```
+build.sh                    Full ISO build
+build-system/mkkernel.sh    Builds the monolithic kernel
+build-system/mkrepo.sh      Builds and signs the package repository
+build-system/mkupdate.sh    Builds and signs an A/B update bundle (slot B)
+pkg-manager/                zrpkg (Rust)
+pkg-manager/fuzz/           cargo-fuzz targets for untrusted-input parsing
+vakt-init/                  PID 1, supervisor, readiness, shutdown (Rust)
+vakt-net/                   Networking daemon (Rust)
+vakt-compositor/            Framebuffer compositor (Rust)
+vakt-verify/                Independent signature verifier (Zig)
+vakt-update/                A/B OS image updater (Rust)
+tools/cmd/                  Go tools: panel, audit, ids, repo server
+tools/vakt-backup           Backs up /persistent (ships in the image)
+tools/vakt-restore          Restores a vakt-backup archive (ships in the image)
+deploy/                     Running the repository on a rented server
+docs/OPERATIONS.md          Runbook: lockouts, crash loops, IDS alerts, backups
+docs/SECURITY_AUDIT.md      Findings, unsafe-block review, fuzzing notes
+docs/HARDWARE_VALIDATION.md Checklist for testing on real hardware
+docs/OS_UPDATES.md          A/B update design and what's actually verified
+.github/workflows/build.yml CI: tests, package pipeline, ISO artifact
+```
+
+</details>
+
+<details>
+<summary><b>Third-party components</b></summary>
 
 Almost everything here is written from scratch. What isn't:
 
@@ -248,9 +344,13 @@ wire format (no code). Kernel hardening options follow the
 CI: `actions/checkout`, `actions/cache`, `actions/upload-artifact`,
 [`softprops/action-gh-release`](https://github.com/softprops/action-gh-release).
 
+</details>
+
+---
+
 ## License
 
 [Apache License 2.0](LICENSE). Use, modify, and redistribute freely —
 including commercially — as long as you keep the copyright/license notices
-(see [NOTICE](NOTICE)) and state what you changed. Third-party components
-keep their own licenses.
+(see [NOTICE](NOTICE)) and state what you changed. Third-party components keep
+their own licenses.
