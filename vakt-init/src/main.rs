@@ -193,11 +193,34 @@ fn main() {
 /// down. This is the main thread's final job; shutdown happens on another one.
 fn console_loop(identity: Option<&Identity>, persistent: bool) {
     let session = session_environment(identity, persistent);
-    let shell_identity = if root_shell_requested() {
-        None
-    } else {
-        identity
-    };
+    let recovery = root_shell_requested();
+    let shell_identity = if recovery { None } else { identity };
+
+    // `vakt.rootshell` has to skip the panel outright, not merely change who
+    // the fallback shell runs as. It is the documented way back in after a
+    // forgotten PIN (docs/OPERATIONS.md), and a panel that starts correctly
+    // never exits - so leaving it in the way made the recovery entry reach a
+    // PIN prompt and stop, which is precisely the situation it exists to
+    // rescue. It only appeared to work while the panel was crash-looping.
+    if recovery {
+        println!(
+            "[Vakt-Init] \x1b[1;33m{} on the kernel command line: \
+             skipping the panel, going straight to a root shell.\x1b[0m",
+            ROOT_SHELL_FLAG
+        );
+        while !shutdown::under_way() {
+            let shell = run_on_console(&["/bin/sh"], None, &session);
+            report_exit("Recovery shell", &shell);
+            if shutdown::under_way() {
+                break;
+            }
+            // A shell that will not stay is not something to retry at speed.
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        loop {
+            std::thread::park();
+        }
+    }
 
     // Consecutive rounds where both the panel and the fallback shell gave up
     // immediately. Without this the loop spins as fast as the two execs
