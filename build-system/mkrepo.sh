@@ -81,7 +81,7 @@ for entry in "${PACKAGES[@]}"; do
     echo "[+] Staging $name..."
     mkdir -p "$STAGE/$name/usr/bin"
     cp "$binary" "$STAGE/$name/usr/bin/$name"
-    chmod +x "$STAGE/$name/usr/bin/$name"
+    chmod 755 "$STAGE/$name/usr/bin/$name"
 
     PACK_ARGS=(pack "$STAGE/$name" --key-file "$KEY_FILE"
         --out-dir "$REPO_DIR"

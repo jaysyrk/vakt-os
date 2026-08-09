@@ -167,7 +167,7 @@ ln -s lib "$ROOTFS/usr/lib64"
 echo "[+] Downloading statically linked busybox..."
 curl -fSL --retry 3 -o "$ROOTFS/bin/busybox" "$BUSYBOX_URL"
 echo "$BUSYBOX_SHA256  $ROOTFS/bin/busybox" | sha256sum -c -
-chmod +x "$ROOTFS/bin/busybox"
+chmod 755 "$ROOTFS/bin/busybox"
 
 echo "[+] Linking busybox applets..."
 if APPLETS=$("$ROOTFS/bin/busybox" --list 2>/dev/null) && [ -n "$APPLETS" ]; then
@@ -222,7 +222,7 @@ copy_deps "$PROJECT_ROOT/vakt-verify/zig-out/bin/vakt-verify" "$ROOTFS"
 copy_deps "$PROJECT_ROOT/vakt-update/target/release/vakt-update" "$ROOTFS"
 cp "$PROJECT_ROOT/tools/vakt-backup" "$ROOTFS/usr/bin/vakt-backup"
 cp "$PROJECT_ROOT/tools/vakt-restore" "$ROOTFS/usr/bin/vakt-restore"
-chmod +x "$ROOTFS/usr/bin/vakt-backup" "$ROOTFS/usr/bin/vakt-restore"
+chmod 755 "$ROOTFS/usr/bin/vakt-backup" "$ROOTFS/usr/bin/vakt-restore"
 cp "$PROJECT_ROOT/build-system/fastfetch/vakt_logo.txt" "$ROOTFS/etc/vakt_logo.txt"
 
 # A/B slot marker - see vakt-init/src/update.rs.
@@ -274,12 +274,12 @@ case "$1" in
         ;;
 esac
 EOF
-chmod +x "$ROOTFS/usr/share/udhcpc/default.script"
+chmod 755 "$ROOTFS/usr/share/udhcpc/default.script"
 
 # --- Init --------------------------------------------------------------------
 echo "[+] Injecting vakt-init as PID 1..."
 cp "$PROJECT_ROOT/vakt-init/target/release/vakt-init" "$ROOTFS/init"
-chmod +x "$ROOTFS/init"
+chmod 755 "$ROOTFS/init"
 copy_deps "$ROOTFS/init" "$ROOTFS"
 
 echo ""
@@ -313,6 +313,19 @@ fi
 echo ""
 echo "[Step 4/4] Packing the image"
 echo "----------------------------------------"
+
+# ROOTFS came from `mktemp -d`, which is always 0700 - correct while the build
+# is staging root-owned files on a shared machine, and wrong the moment it is
+# packed, because `find .` records that mode for `.` and the kernel's
+# initramfs extractor chmods the real `/` to match. A 0700 root directory is
+# not traversable by the unprivileged panel user, so every exec as that user
+# fails with EACCES: the panel and the fallback shell both die instantly and
+# vakt-init sits in a launch/exit loop. Root is unaffected, which is why the
+# recovery shell still works and why this never showed up in CI, which builds
+# the image but never boots it as anyone but root.
+echo "[+] Setting the image root to 0755..."
+chmod 755 "$ROOTFS"
+
 echo "[+] Packing initramfs..."
 # Fixed path (CI's summary step reads it directly), so unlike ROOTFS/ISO_DIR
 # this can't just move to mktemp -d - guard the write instead: refuse if the
