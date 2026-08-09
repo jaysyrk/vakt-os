@@ -83,6 +83,14 @@ cd tools && go vet ./...
 bash -n build.sh build-system/*.sh deploy/*.sh
 ```
 
+If you touched anything that packs the image, check the archive too — CI only
+ever runs the image as root, so a mode that locks out the panel's unprivileged
+user passes here and fails on hardware:
+
+```bash
+./build-system/checkimage.sh /tmp/vakt-initramfs.cpio.gz
+```
+
 ## Writing code here
 
 **Tests are for behaviour that would otherwise be a guess.** The supervisor is

@@ -21,7 +21,7 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Install toolchains
-        run: pacman -Syu --noconfirm git rust go zig base-devel
+        run: pacman -Syu --noconfirm git rust go zig base-devel cpio
 
       - uses: actions/checkout@v4
 
@@ -74,7 +74,33 @@ jobs:
         run: zig build test --summary all
 
       - name: Shell scripts parse
-        run: bash -n build.sh build-system/*.sh deploy/*.sh tools/vakt-backup tools/vakt-restore
+        run: |
+          bash -n build.sh build-system/*.sh deploy/*.sh tools/vakt-backup tools/vakt-restore
+
+          # checkimage.sh is what stands between a mode regression and another
+          # unbootable image, so exercise it against archives with the two
+          # faults that have actually shipped.
+          WORK=$(mktemp -d)
+          mkdir -p "$WORK/img"/{usr/bin,bin,lib/modules}
+          touch "$WORK/img"/{usr/bin/vakt-panel,bin/sh,usr/bin/modprobe}
+          chmod 755 "$WORK/img" "$WORK/img"/usr/bin/vakt-panel "$WORK/img"/bin/sh \
+            "$WORK/img"/usr/bin/modprobe
+          pack() { (cd "$WORK/img" && find . -print0 |
+            cpio --null -o --format=newc 2>/dev/null | gzip -1 > "$1"); }
+
+          pack "$WORK/good.cpio.gz"
+          ./build-system/checkimage.sh "$WORK/good.cpio.gz"
+
+          chmod 700 "$WORK/img" && pack "$WORK/root0700.cpio.gz" && chmod 755 "$WORK/img"
+          if ./build-system/checkimage.sh "$WORK/root0700.cpio.gz" 2>/dev/null; then
+            echo "::error::checkimage.sh passed an image whose root is 0700"; exit 1
+          fi
+
+          cp "$WORK/img/bin/sh" "$WORK/img/bin/modprobe" && pack "$WORK/shadow.cpio.gz"
+          if ./build-system/checkimage.sh "$WORK/shadow.cpio.gz" 2>/dev/null; then
+            echo "::error::checkimage.sh passed an image with busybox modprobe shadowing kmod"; exit 1
+          fi
+          echo "checkimage.sh rejects both known-bad images"
 
       - name: GRUB config syntax check
         run: |
@@ -243,6 +269,12 @@ jobs:
           VAKT_KERNEL: custom
         run: |
           SUDO_USER=root ./build.sh
+
+      # CI builds the image but only ever runs it as root, so a mode that
+      # locks out the unprivileged panel user boots fine here and fails on
+      # real hardware. Read the modes straight out of the archive instead.
+      - name: Check the packed initramfs
+        run: ./build-system/checkimage.sh /tmp/vakt-initramfs.cpio.gz
 
       - name: Build and apply an update bundle end to end
         env:

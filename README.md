@@ -297,6 +297,7 @@ build.sh                    Full ISO build
 build-system/mkkernel.sh    Builds the monolithic kernel
 build-system/mkrepo.sh      Builds and signs the package repository
 build-system/mkupdate.sh    Builds and signs an A/B update bundle (slot B)
+build-system/checkimage.sh  Checks a packed initramfs without booting it
 pkg-manager/                zrpkg (Rust)
 pkg-manager/fuzz/           cargo-fuzz targets for untrusted-input parsing
 vakt-init/                  PID 1, supervisor, readiness, shutdown (Rust)
