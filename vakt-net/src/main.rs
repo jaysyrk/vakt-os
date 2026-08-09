@@ -1,4 +1,5 @@
 mod config;
+mod link;
 mod notify;
 mod sandbox;
 mod status;
@@ -54,26 +55,54 @@ fn main() {
     loop {
         let stamp = config::config_stamp();
 
-        let Some((path, cfg)) = config::load() else {
-            status::write(&Status {
-                state: State::Unconfigured,
-                interface: NetConfig::default().interface,
-                ssid: None,
-                ip: None,
-                detail: format!(
-                    "No config. Set up Wi-Fi in the panel, or write {}.",
-                    config::PERSISTENT_CONF
-                ),
-            });
-            log!("No configuration found; waiting for one to appear.");
-            announce(&mut announced, "no network configured");
-            wait_for_config_change(stamp, None);
-            continue;
+        let configured = config::load();
+
+        // With nothing configured, a cable is still a network. The panel
+        // cannot describe a wired setup - its only network page demands an
+        // SSID - so without this an appliance with ethernet and no Wi-Fi has
+        // no supported route online at all.
+        let (source, cfg) = match configured {
+            Some((path, cfg)) => (path.display().to_string(), cfg),
+            None => match link::first_wired_link() {
+                Some(interface) => {
+                    log!(
+                        "No configuration, but {} has a cable; using DHCP.",
+                        interface
+                    );
+                    (
+                        "a wired link, with no configuration".to_string(),
+                        NetConfig {
+                            interface,
+                            ..NetConfig::default()
+                        },
+                    )
+                }
+                None => {
+                    status::write(&Status {
+                        state: State::Unconfigured,
+                        interface: NetConfig::default().interface,
+                        ssid: None,
+                        ip: None,
+                        detail: format!(
+                            "No config and no wired link. Set up Wi-Fi in the panel, \
+                             plug in a cable, or write {}.",
+                            config::PERSISTENT_CONF
+                        ),
+                    });
+                    log!("No configuration and no cable; waiting for either.");
+                    announce(&mut announced, "no network configured");
+                    // Bounded, unlike the old wait: plugging a cable into an
+                    // unconfigured appliance changes no file, so there would
+                    // be nothing to wake this up.
+                    wait_for_config_change(stamp, Some(BACKOFF_MAX));
+                    continue;
+                }
+            },
         };
 
         log!(
             "Using {} (interface {}, {}).",
-            path.display(),
+            source,
             cfg.interface,
             if cfg.is_wireless() {
                 "wireless"

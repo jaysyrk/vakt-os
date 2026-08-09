@@ -213,10 +213,15 @@ sudo e2label /dev/sdX VAKTDATA
    ```bash
    cat /run/vakt-net.status
    ```
-   - `unconfigured` — no Wi-Fi set up and no wired link. Expected on a fresh
-     appliance.
+   - `unconfigured` — no Wi-Fi set up **and** no cable in any port. On a
+     fresh appliance, plugging in ethernet is enough on its own.
    - `failed` — it tried and couldn't.
-2. **Wi-Fi needs `VAKT_KERNEL=host`.** The `custom` kernel ships no chipset
+2. **A wired cable needs no configuration.** With no config file at all,
+   `vakt-net` brings each wired interface up, and DHCPs on the first one that
+   reports a carrier. It re-checks about once a minute, so a cable plugged in
+   later is picked up without a reboot. Wi-Fi still has to be set up in the
+   panel, because it needs credentials.
+3. **Wi-Fi needs `VAKT_KERNEL=host`.** The `custom` kernel ships no chipset
    firmware, on purpose.
 3. More detail:
    ```bash

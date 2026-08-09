@@ -71,6 +71,11 @@ config targets.
 
 ## 5. Wired networking
 
+Works under QEMU with an e1000: `state=connected`, `ip=10.0.2.15`, and
+`vakt-net` picked up a config written while it was running without needing a
+restart. What is left for a real machine is whether *this* NIC's driver is
+present and whether its carrier is detected.
+
 - [ ] `cat /run/vakt-net.status` shows `connected` with DHCP, no
       `vakt-net.conf` present, on plain Ethernet.
 - [ ] Confirms the NIC's driver is present in whichever kernel mode you
