@@ -70,16 +70,15 @@ pub fn check_and_handle(persistent_mounted: bool) {
 
     let slot = current_slot();
 
-    if let Ok(entries) = envblock::read(Path::new(BOOTENV_PATH)) {
-        if let Some(active) = entries.get("vakt_active") {
-            if active != &slot {
-                println!(
-                    "[Vakt-Init] \x1b[1;33mGRUB's active slot ('{}') does not match \
-                     this boot's slot ('{}').\x1b[0m",
-                    active, slot
-                );
-            }
-        }
+    if let Ok(entries) = envblock::read(Path::new(BOOTENV_PATH))
+        && let Some(active) = entries.get("vakt_active")
+        && active != &slot
+    {
+        println!(
+            "[Vakt-Init] \x1b[1;33mGRUB's active slot ('{}') does not match \
+             this boot's slot ('{}').\x1b[0m",
+            active, slot
+        );
     }
 
     match next(&slot, load_tries_left()) {

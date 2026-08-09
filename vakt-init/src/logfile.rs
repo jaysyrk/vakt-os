@@ -87,7 +87,9 @@ impl BoundedLog {
         Ok(())
     }
 
-    /// Total bytes accepted over this log's lifetime.
+    /// Total bytes accepted over this log's lifetime. Only the tests need
+    /// this; the supervisor never reads it.
+    #[cfg(test)]
     pub fn total_seen(&self) -> u64 {
         self.seen
     }
@@ -200,7 +202,7 @@ mod tests {
 
         let mut log = BoundedLog::create(&path, 512).unwrap();
         for _ in 0..50 {
-            log.write_chunk(&vec![b'z'; 200]).unwrap();
+            log.write_chunk(&[b'z'; 200]).unwrap();
         }
 
         let mut names: Vec<String> = std::fs::read_dir(&dir)

@@ -136,8 +136,10 @@ impl Listener {
             }
         }
 
+        // Reading `bytes` is the last use of `received`, which is what
+        // releases its borrow of `buffer` - an explicit drop would be a no-op
+        // here, since RecvMsg is Copy.
         let length = received.bytes.min(MAX_DATAGRAM);
-        drop(received);
 
         let mut message = parse(&String::from_utf8_lossy(&buffer[..length]));
         message.pid = pid;

@@ -105,9 +105,9 @@ fn visit<'a>(
 /// Every package name reachable from `roots`, for the fetcher to collect.
 ///
 /// Used to walk the graph one level at a time while manifests are still being
-/// downloaded, so the fetch terminates even if the repository publishes a cycle
-/// - the cycle is then reported by [`install_order`] with a proper message
-/// instead of by an infinite download loop.
+/// downloaded, so the fetch terminates even if the repository publishes a
+/// cycle - the cycle is then reported by [`install_order`] with a proper
+/// message instead of by an infinite download loop.
 pub fn undiscovered(
     roots: &[String],
     manifests: &BTreeMap<String, PackageManifest>,

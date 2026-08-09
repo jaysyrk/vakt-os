@@ -217,10 +217,10 @@ fn block_device_names_in(sys_block: &Path) -> Vec<String> {
         // `holders` symlinks) do not.
         if let Ok(children) = fs::read_dir(disk.path()) {
             for child in children.filter_map(|e| e.ok()) {
-                if child.path().join("partition").exists() {
-                    if let Ok(part_name) = child.file_name().into_string() {
-                        names.push(part_name);
-                    }
+                if child.path().join("partition").exists()
+                    && let Ok(part_name) = child.file_name().into_string()
+                {
+                    names.push(part_name);
                 }
             }
         }

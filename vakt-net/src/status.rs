@@ -50,11 +50,12 @@ pub fn write(status: &Status) {
     let _ = std::fs::create_dir_all(dir);
 
     let tmp_path = dir.join("vakt-net.status.tmp");
-    if let Ok(mut file) = std::fs::File::create(&tmp_path) {
-        if file.write_all(body.as_bytes()).is_ok() && file.sync_all().is_ok() {
-            let _ = std::fs::rename(&tmp_path, final_path);
-            return;
-        }
+    if let Ok(mut file) = std::fs::File::create(&tmp_path)
+        && file.write_all(body.as_bytes()).is_ok()
+        && file.sync_all().is_ok()
+    {
+        let _ = std::fs::rename(&tmp_path, final_path);
+        return;
     }
     let _ = std::fs::remove_file(&tmp_path);
 }

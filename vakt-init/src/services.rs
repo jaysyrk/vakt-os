@@ -134,10 +134,6 @@ impl Control {
         self.shared.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    pub fn phase(&self) -> Phase {
-        self.lock().phase.unwrap_or(Phase::Running)
-    }
-
     /// Records a notification and returns the service it was attributed to.
     ///
     /// `pid` comes from the kernel and is authoritative. `name` is the sender's
@@ -587,11 +583,11 @@ impl Supervisor {
         let status_path = self.run_dir.join(STATUS_NAME);
         let _ = std::fs::create_dir_all(&self.run_dir);
         let tmp = status_path.with_extension("status.tmp");
-        if let Ok(mut file) = File::create(&tmp) {
-            if file.write_all(body.as_bytes()).is_ok() {
-                let _ = std::fs::rename(&tmp, &status_path);
-                return;
-            }
+        if let Ok(mut file) = File::create(&tmp)
+            && file.write_all(body.as_bytes()).is_ok()
+        {
+            let _ = std::fs::rename(&tmp, &status_path);
+            return;
         }
         let _ = std::fs::remove_file(&tmp);
     }

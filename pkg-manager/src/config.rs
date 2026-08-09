@@ -70,13 +70,13 @@ pub fn load() -> Config {
 /// Split out from [`load`] so the precedence rules are testable without
 /// writing to the real system paths.
 fn load_from(persistent: &str, fallback: &str) -> Config {
-    if let Ok(raw) = std::env::var(REPO_URL_ENV) {
-        if let Ok(url) = normalise(&raw) {
-            return Config {
-                repo_url: url,
-                source: Source::Environment,
-            };
-        }
+    if let Ok(raw) = std::env::var(REPO_URL_ENV)
+        && let Ok(url) = normalise(&raw)
+    {
+        return Config {
+            repo_url: url,
+            source: Source::Environment,
+        };
     }
 
     for candidate in [persistent, fallback] {

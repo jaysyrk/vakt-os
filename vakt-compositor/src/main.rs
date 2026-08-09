@@ -1,6 +1,5 @@
 mod sandbox;
 
-use libc;
 use memmap2::MmapMut;
 use std::fs::OpenOptions;
 use std::os::unix::io::AsRawFd;
@@ -143,13 +142,11 @@ fn main() {
                 + (y + vinfo.yoffset) * finfo.line_length;
 
             let loc = location as usize;
-            if loc + 3 < screensize {
-                if vinfo.bits_per_pixel == 32 {
-                    map[loc] = 30; // B
-                    map[loc + 1] = 30; // G
-                    map[loc + 2] = 30; // R
-                    map[loc + 3] = 0; // A
-                }
+            if loc + 3 < screensize && vinfo.bits_per_pixel == 32 {
+                map[loc] = 30; // B
+                map[loc + 1] = 30; // G
+                map[loc + 2] = 30; // R
+                map[loc + 3] = 0; // A
             }
         }
     }
@@ -168,13 +165,11 @@ fn main() {
                     + (y + vinfo.yoffset) * finfo.line_length;
 
                 let loc = location as usize;
-                if loc + 3 < screensize {
-                    if vinfo.bits_per_pixel == 32 {
-                        map[loc] = 255; // B
-                        map[loc + 1] = 50; // G
-                        map[loc + 2] = 50; // R
-                        map[loc + 3] = 0; // A
-                    }
+                if loc + 3 < screensize && vinfo.bits_per_pixel == 32 {
+                    map[loc] = 255; // B
+                    map[loc + 1] = 50; // G
+                    map[loc + 2] = 50; // R
+                    map[loc + 3] = 0; // A
                 }
             }
         }
