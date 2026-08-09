@@ -351,7 +351,19 @@ CI: `actions/checkout`, `actions/cache`, `actions/upload-artifact`,
 
 ## License
 
-[Apache License 2.0](LICENSE). Use, modify, and redistribute freely —
-including commercially — as long as you keep the copyright/license notices
-(see [NOTICE](NOTICE)) and state what you changed. Third-party components keep
-their own licenses.
+[GNU Affero General Public License v3.0](LICENSE), copyright 2026 jaysyrk.
+
+Use it, study it, modify it, run it, redistribute it. The condition is that
+anything you build on it stays under the same license and ships with its
+source — including when people reach a modified version over a network, which
+is the part the Affero clause adds over the plain GPL.
+
+**Commercial licenses are available.** If the AGPL doesn't suit what you want
+to build, the copyright holder can license this code to you under different
+terms — [open an issue](https://github.com/jaysyrk/vakt-os/issues) to ask.
+Being the sole author is what makes that possible.
+
+Third-party components keep their own licenses — see **Third-party components**
+above. The built image carries GPL-2.0 software (busybox, the Linux kernel)
+alongside this project's own binaries: separate programs sharing a disk, not a
+combined work.

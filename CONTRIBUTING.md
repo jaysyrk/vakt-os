@@ -173,3 +173,19 @@ firmware, which the monolithic image does not otherwise carry.
 
 Present tense, describing the change and, where it is not obvious, why.
 Keep formatting-only changes out of commits that change behaviour.
+
+## Licensing of contributions
+
+This project is [AGPL-3.0](LICENSE), and contributions are accepted under it.
+
+By opening a pull request you also grant the maintainer permission to release
+your contribution under other licence terms, including commercial ones. That
+is not a transfer of your copyright - you keep it, and your contribution stays
+AGPL for everyone else. It exists so the project can offer a commercial
+licence alongside the AGPL without having to track down every past contributor
+first, which is the thing that quietly makes dual licensing impossible for
+most projects once they have more than one author.
+
+If you would rather not grant that, say so in the pull request. It is a
+reasonable position and worth knowing before the code is merged rather than
+after.
