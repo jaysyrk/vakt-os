@@ -27,7 +27,10 @@ func authGateRoot(app *tview.Application, mainLayout, focusAfter tview.Primitive
 	if hasPIN() {
 		return lockScreen(unlock)
 	}
-	return setupScreen(unlock)
+	// A damaged auth file reaches setup too (see hasPINAt), so say which
+	// situation this is. Silently showing first-boot setup on an appliance
+	// that had a PIN yesterday would be its own kind of alarming.
+	return setupScreen(unlock, pinDamaged())
 }
 
 func gateFrame(inner tview.Primitive, innerHeight int) tview.Primitive {
@@ -73,14 +76,19 @@ func lockScreen(unlock func()) tview.Primitive {
 // leaving the console open. A root recovery shell (vakt.rootshell on the
 // kernel command line) can always delete the stored PIN file if one set here
 // is later forgotten.
-func setupScreen(unlock func()) tview.Primitive {
+func setupScreen(unlock func(), damaged bool) tview.Primitive {
 	result := tview.NewTextView().SetDynamicColors(true)
-	notice := tview.NewTextView().
-		SetDynamicColors(true).
-		SetText("[yellow]No PIN is set. Anyone with console access has full control\n" +
-			"of this appliance - Wi-Fi credentials, installed packages, and\n" +
-			"shutdown. Set one now, or skip and set it later from the\n" +
-			"Panel Lock page.[-]")
+
+	message := "[yellow]No PIN is set. Anyone with console access has full control\n" +
+		"of this appliance - Wi-Fi credentials, installed packages, and\n" +
+		"shutdown. Set one now, or skip and set it later from the\n" +
+		"Panel Lock page.[-]"
+	if damaged {
+		message = "[red]The stored PIN could not be read - the file is there but is\n" +
+			"not usable, so no PIN would ever have unlocked it. It is being\n" +
+			"treated as unset. Set a new one now; the old one is gone.[-]"
+	}
+	notice := tview.NewTextView().SetDynamicColors(true).SetText(message)
 
 	form := tview.NewForm()
 	form.AddPasswordField("New PIN", "", 20, '*', nil)

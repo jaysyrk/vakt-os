@@ -32,10 +32,59 @@ func hasPIN() bool              { return hasPINAt(authFilePath()) }
 func setPIN(pin string) error   { return setPINAt(authFilePath(), pin) }
 func verifyPIN(pin string) bool { return verifyPINAt(authFilePath(), pin) }
 func removePIN() error          { return removePINAt(authFilePath()) }
+func pinDamaged() bool          { return storedPIN(authFilePath()) == pinUnusable }
 
+// What is actually sitting at the auth file path.
+type pinState int
+
+const (
+	pinAbsent pinState = iota
+	pinUsable
+	// The file is there but nothing can be checked against it.
+	pinUnusable
+)
+
+// storedPIN reports whether the auth file holds something a PIN could
+// actually be verified against.
+//
+// The distinction matters because verifyPINAt fails safe for every candidate
+// when the stored value is malformed - the correct PIN included. Treating
+// "exists" as "has a PIN", which is what this used to do, therefore turns a
+// truncated or empty file into a lock screen that nothing will ever open.
+func storedPIN(path string) pinState {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return pinAbsent
+	}
+
+	saltHex, wantHex, found := strings.Cut(strings.TrimSpace(string(data)), ":")
+	if !found {
+		return pinUnusable
+	}
+	salt, err := hex.DecodeString(saltHex)
+	if err != nil || len(salt) != saltBytes {
+		return pinUnusable
+	}
+	digest, err := hex.DecodeString(wantHex)
+	if err != nil || len(digest) != sha256.Size {
+		return pinUnusable
+	}
+	return pinUsable
+}
+
+// hasPINAt reports whether a usable PIN is configured.
+//
+// An unusable file counts as no PIN rather than as a locked console. That is
+// deliberate: this gate defends against someone at the console who does not
+// know the PIN, and such a person cannot write this file - it is 0600 and
+// owned by the panel's own user, so damaging it already requires running code
+// as that user, which means the panel has been bypassed by other means. The
+// project also documents `vakt.rootshell` as the sanctioned way past a
+// forgotten PIN. Against that, a console no one can ever open again is the
+// worse outcome, so a damaged file falls back to first-boot setup - loudly,
+// see setupScreen.
 func hasPINAt(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	return storedPIN(path) == pinUsable
 }
 
 // setPINAt hashes and stores a new PIN, replacing any existing one. Each call
