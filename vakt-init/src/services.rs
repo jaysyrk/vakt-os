@@ -95,6 +95,14 @@ struct Shared {
     ready: BTreeSet<String>,
     /// The most recent `STATUS=` line each service sent.
     status: BTreeMap<String, String>,
+    /// Bumped by every change worth republishing.
+    ///
+    /// Readiness arrives on the socket thread, and the supervisor is what
+    /// writes the status file. Without this the supervisor only rewrites when
+    /// a child exits, so on an appliance where nothing ever crashes the file
+    /// keeps whatever `start_all` wrote - every service `waiting`, forever,
+    /// on a system that is in fact fully up.
+    revision: u64,
 }
 
 /// The supervisor's shared state.
@@ -156,6 +164,7 @@ impl Control {
         if let Some(status) = status {
             shared.status.insert(service.clone(), status.to_string());
         }
+        shared.revision += 1;
         self.changed.notify_all();
         Some(service)
     }
@@ -173,6 +182,7 @@ impl Control {
             shared.pids.remove(&pid);
         }
         shared.ready.remove(name);
+        shared.revision += 1;
         self.changed.notify_all();
     }
 
@@ -180,7 +190,14 @@ impl Control {
     fn settle(&self, name: &str) {
         let mut shared = self.lock();
         shared.awaiting.remove(name);
+        shared.revision += 1;
         self.changed.notify_all();
+    }
+
+    /// A counter the supervisor compares against to know the published status
+    /// file is out of date.
+    fn revision(&self) -> u64 {
+        self.lock().revision
     }
 
     fn snapshot(&self, name: &str) -> (bool, Option<String>) {
@@ -396,10 +413,17 @@ impl Supervisor {
     /// the console stays free for the panel.
     pub fn run(mut self) {
         self.start_all();
+        let mut published = self.control.revision();
 
         while self.control.wait_tick(TICK) != Phase::Stopping {
-            if self.reap() {
+            // Readiness and STATUS lines land on the socket thread, so a
+            // service coming up is not something `reap` can see. Both have to
+            // republish or the file describes the moment of launch and never
+            // anything after it.
+            let revision = self.control.revision();
+            if self.reap() | (revision != published) {
                 self.write_status();
+                published = revision;
             }
         }
 
@@ -668,6 +692,64 @@ mod tests {
         notifies: false,
         description: "stays up",
     }];
+
+    const NOTIFIER: &[Service] = &[Service {
+        name: "notifier",
+        program: "/bin/sh",
+        args: &["-c", "sleep 30"],
+        respawn: true,
+        notifies: true,
+        description: "reports readiness",
+    }];
+
+    /// Readiness must reach the status file even when no service ever dies.
+    ///
+    /// `reap` is the only thing that used to trigger a rewrite, and it only
+    /// reports a change when a child exits - so on a healthy appliance the
+    /// file kept saying every service was `waiting` forever, hours after they
+    /// had all reported. Both the panel's Services page and the runbook tell
+    /// an operator to read that file, so it described a broken system while
+    /// the real one was fine.
+    #[test]
+    fn readiness_republishes_the_status_file_without_anything_exiting() {
+        let dir = scratch("readiness-republish");
+        let mut sup = supervisor(NOTIFIER, dir.clone());
+        let control = Arc::clone(&sup.control);
+        sup.start_all();
+
+        let published = control.revision();
+        let before = std::fs::read_to_string(dir.join(STATUS_NAME)).unwrap();
+        assert!(
+            before.contains("\twaiting\t"),
+            "a service that has not reported yet is waiting: {}",
+            before
+        );
+
+        control.note_ready(None, Some("notifier"), Some("watching 3 files"));
+
+        assert_ne!(
+            control.revision(),
+            published,
+            "readiness must mark the published file stale"
+        );
+        // What the supervisor's loop does with that.
+        assert!(!sup.reap(), "nothing exited");
+        sup.write_status();
+
+        let after = std::fs::read_to_string(dir.join(STATUS_NAME)).unwrap();
+        assert!(after.contains("\tready\t"), "got: {}", after);
+        assert!(
+            after.contains("watching 3 files"),
+            "the reported STATUS line is the useful part: {}",
+            after
+        );
+
+        if let Some(child) = sup.services[0].child.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn running_service_writes_a_pid_file_and_is_reported_running() {

@@ -42,6 +42,11 @@ zrpkg repo                    # which repository this appliance fetches from
 Healthy looks like: every service `running` + `ready`, network `connected`,
 no unexplained IDS findings.
 
+> Builds before this was fixed only rewrote `/run/services.status` when a
+> service *died*, so a perfectly healthy appliance showed every service
+> `waiting` forever. If you see that on an older image, check the boot log for
+> `Service '<name>' is ready.` — that line is the truth, the file wasn't.
+
 ---
 
 ## Get back in
