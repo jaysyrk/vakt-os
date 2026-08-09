@@ -242,6 +242,32 @@ from any Linux machine with the data disk attached:
 sudo chown 1000:1000 /mnt/vakt/etc/vakt-panel.auth   # the PIN itself is unaffected
 ```
 
+### Verified off the appliance
+
+Section 8's detection half does not need hardware, and was run on an ordinary
+Linux host with `--once`, which makes each scan deterministic instead of
+racing a 30-second timer:
+
+```bash
+go build -o /tmp/vakt-ids ./cmd/vakt-ids/
+D=/tmp/idstest; rm -rf "$D"; mkdir -p "$D"; echo original > "$D/watched.txt"
+/tmp/vakt-ids --watch "$D" --once                                     # baseline
+echo new > "$D/added.txt";       /tmp/vakt-ids --watch "$D" --once    # ADDED
+echo changed > "$D/watched.txt"; /tmp/vakt-ids --watch "$D" --once    # MODIFIED
+chmod 777 "$D/added.txt";        /tmp/vakt-ids --watch "$D" --once    # PERMISSIONS
+rm "$D/added.txt";               /tmp/vakt-ids --watch "$D" --once    # DELETED
+```
+
+All four finding types fire, the permissions one reports the transition
+(`0644 -> 0777`), and the baseline updates itself between runs. A separately
+running daemon on `--interval 3s` picked the same change up on its own timer,
+so the continuous path works as well as the one-shot one.
+
+What that leaves untested is the plumbing around it on a real appliance:
+running as root under the supervisor, appending to `/run/vakt-ids.alerts`, and
+the panel's Intrusion Detection page reading that file. The detection logic
+itself is no longer a question.
+
 ### Notes for the next machine
 
 - Kernel modules are `.ko.zst`. Anything that loads modules must be real kmod;
