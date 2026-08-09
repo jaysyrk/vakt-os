@@ -242,11 +242,11 @@ from any Linux machine with the data disk attached:
 sudo chown 1000:1000 /mnt/vakt/etc/vakt-panel.auth   # the PIN itself is unaffected
 ```
 
-### Verified off the appliance
+### Verified without hardware
 
-Section 8's detection half does not need hardware, and was run on an ordinary
-Linux host with `--once`, which makes each scan deterministic instead of
-racing a 30-second timer:
+Section 8's detection half does not need hardware. It was run first on an
+ordinary Linux host with `--once`, which makes each scan deterministic instead
+of racing a 30-second timer:
 
 ```bash
 go build -o /tmp/vakt-ids ./cmd/vakt-ids/
@@ -263,10 +263,26 @@ All four finding types fire, the permissions one reports the transition
 running daemon on `--interval 3s` picked the same change up on its own timer,
 so the continuous path works as well as the one-shot one.
 
-What that leaves untested is the plumbing around it on a real appliance:
-running as root under the supervisor, appending to `/run/vakt-ids.alerts`, and
-the panel's Intrusion Detection page reading that file. The detection logic
-itself is no longer a question.
+The plumbing was then closed on a booted appliance under QEMU:
+
+```sh
+touch /nope                                  # Read-only file system
+echo test > /persistent/etc/ids-test.txt     # wait one scan interval
+cat /run/vakt-ids.alerts                     # ADDED /persistent/etc/ids-test.txt
+```
+
+So the daemon reports findings while supervised and running as root, the alert
+file is readable by the unprivileged panel user, and `seal_root()` genuinely
+seals the root - the last of which is the project's headline claim and had
+never once been checked on a running system.
+
+`/run/services.status` also shows both daemons `ready` with their own reported
+text (`watching 2 file(s) under /persistent`, `no network configured`) rather
+than `waiting`, which is what the supervisor's republish fix was for.
+
+QEMU is enough for all of that: none of it depends on real hardware. What it
+cannot show is Wi-Fi, Secure Boot, storage controller detection, the
+framebuffer at a real resolution, or whether the machine actually powers off.
 
 ### Notes for the next machine
 
