@@ -34,13 +34,20 @@ Needs an **Arch host** with root (the build uses `pacman`).
 sudo ./build.sh                          # 1. build the ISO
 ./tools/bin/zrpkg-server -dir tools/repo &   # 2. serve packages
 
-qemu-system-x86_64 -m 2G -enable-kvm \
+qemu-system-x86_64 -m 8G -enable-kvm \
     -drive file=vakt-data.img,format=raw,index=0,media=disk \
     -cdrom vakt-os.iso \
     -netdev user,id=n0 -device e1000,netdev=n0
 ```
 
 That's it. You'll land on a PIN setup screen, then the panel.
+
+> **Give it plenty of RAM.** The initramfs *is* the root filesystem, so it all
+> has to fit in memory — and during boot the compressed copy and the unpacked
+> one exist at once. Too little RAM and the kernel panics with
+> `No working init found`, which reads like a broken image and isn't one. A
+> `host`-kernel build carries the machine's driver and firmware trees and runs
+> a few hundred MB; `VAKT_KERNEL=custom` is far smaller.
 
 ---
 

@@ -9,6 +9,7 @@ that's the [README](../README.md).
 
 | What you're seeing | Go to |
 |---|---|
+| `Kernel panic - No working init found` | Not enough RAM, usually. See below. |
 | Locked out — forgot the PIN | [Get back in](#get-back-in) |
 | Panel opens and closes over and over | [The console loop](#the-console-loop) |
 | PIN is correct but won't unlock | [Get back in](#get-back-in) |
@@ -17,6 +18,26 @@ that's the [README](../README.md).
 | IDS alert fired | [An IDS alert fired](#an-ids-alert-fired) |
 | Data disk missing / changes don't survive reboot | [The disk isn't mounting](#the-disk-isnt-mounting) |
 | You think it's compromised | [Start over safely](#start-over-safely) |
+
+---
+
+## `No working init found`
+
+The kernel loaded, then found nothing to run.
+
+**In a VM, this is almost always too little RAM.** The initramfs is the root
+filesystem, and while it unpacks the compressed copy and the unpacked one are
+in memory at once. Give it 8G and try again before suspecting the image.
+
+On real hardware, or if more RAM doesn't help, check the image itself — no
+booting required:
+
+```bash
+./build-system/checkimage.sh /tmp/vakt-initramfs.cpio.gz
+```
+
+It reports a missing or non-executable `/init`, a root directory the panel's
+user can't traverse, and a few other faults that have shipped before.
 
 ---
 

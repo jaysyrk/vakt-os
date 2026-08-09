@@ -295,7 +295,27 @@ if [ "$VAKT_KERNEL" = "host" ]; then
     cp /boot/vmlinuz-linux "$ISO_DIR/boot/vmlinuz"
     mkdir -p "$ROOTFS/lib/modules" "$ROOTFS/lib/firmware"
     cp -r "/lib/modules/$(uname -r)" "$ROOTFS/lib/modules/"
-    cp -r /lib/firmware/* "$ROOTFS/lib/firmware/" 2>/dev/null || true
+
+    # The initramfs *is* the root filesystem here: it is never unmounted, so
+    # every byte of it occupies RAM for as long as the appliance is up. The
+    # host's firmware tree is around 570MB on a current Arch install, and most
+    # of it is for hardware classes this system cannot use at all - it draws
+    # to a plain framebuffer through an ioctl and has no audio stack.
+    #
+    # Only whole categories are skipped, never anything that carries network
+    # firmware: a missing Wi-Fi blob is an appliance that cannot reach its
+    # repository, which is far worse than a large image. Set
+    # VAKT_FIRMWARE_SKIP to override, or to "" to ship everything.
+    VAKT_FIRMWARE_SKIP="${VAKT_FIRMWARE_SKIP-nvidia amdgpu i915 xe cirrus}"
+    echo "[+] Copying firmware (skipping: ${VAKT_FIRMWARE_SKIP:-nothing})..."
+    for entry in /lib/firmware/*; do
+        skip=""
+        for unwanted in $VAKT_FIRMWARE_SKIP; do
+            [ "$(basename "$entry")" = "$unwanted" ] && skip=yes && break
+        done
+        [ -n "$skip" ] && continue
+        cp -r "$entry" "$ROOTFS/lib/firmware/" 2>/dev/null || true
+    done
     copy_deps "$(command -v modprobe)" "$ROOTFS"
     # busybox's own modprobe applet (linked below, into /bin) can't decompress
     # the .ko.zst/.ko.xz files a real kernel package ships, and /bin comes
@@ -425,7 +445,7 @@ echo ""
 echo "Then boot (vakt-init finds the data disk by its VAKTDATA label, not by"
 echo "drive order, so index=0 below is just a convention, not a requirement)."
 echo "User networking puts this host at 10.0.2.2:"
-echo "    qemu-system-x86_64 -m 2G \\"
+echo "    qemu-system-x86_64 -m 8G \\"
 echo "        -drive file=$PROJECT_ROOT/vakt-data.img,format=raw,index=0,media=disk \\"
 echo "        -cdrom $OUT_ISO \\"
 echo "        -netdev user,id=n0 -device e1000,netdev=n0"
