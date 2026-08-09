@@ -16,7 +16,7 @@ rootfs, a Rust PID 1, and the tools in this repo.
 
 | | |
 |---|---|
-| **Boots and runs?** | Yes — on real hardware, as of the latest build |
+| **Boots and runs?** | Yes — boots, mounts its disk, and unlocks on real hardware |
 | **Safe for real use?** | **Not yet.** No independent security review |
 | **A/B OS updates** | Written, never survived a real reboot — [details](docs/OS_UPDATES.md) |
 | **Hardware coverage** | One machine. [Checklist here](docs/HARDWARE_VALIDATION.md) |

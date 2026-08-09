@@ -65,7 +65,7 @@
 - [x] **Operator Documentation**
   - [x] An incident-response runbook, a key-rotation procedure, and steps for recovering a bricked appliance.
 - [ ] **Real Hardware Validation** — started, partial. See notes below.
-  - [x] One machine boots, mounts its data disk, and reaches the panel — the pass that found five boot bugs (see [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md#results-machine-1-2026-08-first-real-hardware-pass)).
+  - [x] One machine boots, mounts its data disk, and unlocks the panel with a PIN — the pass that found seven bugs (see [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md#results-machine-1-2026-08-first-real-hardware-pass)).
   - [ ] Secure Boot, wired and Wi-Fi networking, package install, IDS alerting and shutdown are untested on any real machine.
 
 ---
@@ -193,7 +193,10 @@ it on real hardware: [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md#o
   `/dev/sda`, a one-shot module scan that missed late-enumerating USB
   storage, and an image root shipped as 0700 because `mktemp -d`'s mode
   ended up on the cpio's `.` entry. All five presented identically, as a
-  panel crash loop. Secure Boot, wired and Wi-Fi networking, package
-  install, IDS alerting and shutdown remain untested anywhere.
+  panel crash loop. Two more sat behind the PIN screen once it did boot: an
+  Enter key that moved focus instead of submitting, and an auth file left
+  root-owned and 0600 that the unprivileged panel could not read — reported,
+  wrongly, as "no PIN configured". Secure Boot, wired and Wi-Fi networking,
+  package install, IDS alerting and shutdown remain untested anywhere.
   [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md) is the
   checklist and now carries the results so far.

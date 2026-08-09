@@ -9,10 +9,10 @@ Use `VAKT_KERNEL=host` for real hardware — the `custom` monolithic kernel
 carries no Wi-Fi chipset firmware and is meant for QEMU or one fixed, known
 machine (see the README's Building section).
 
-One machine has been through part of this — sections 1, 3 and 7 pass, 2, 5, 6,
-8, 9 and A/B updates are still untested anywhere. Read
+One machine has been through part of this — sections 1, 3, 4 and 7 pass, and
+2, 5, 6, 8, 9 and A/B updates are still untested anywhere. Read
 [Results: machine 1](#results-machine-1-2026-08-first-real-hardware-pass)
-before starting; it will save you the five bugs it cost to get that far.
+before starting; it will save you the seven bugs it cost to get that far.
 
 Work through this on hardware you're willing to have wiped: the build writes
 a boot USB and expects a second disk it will `mkfs.ext4` for `/persistent`.
@@ -184,9 +184,10 @@ unsupported (a storage controller, a Wi-Fi chipset), that's a
 Desktop PC, built on Arch Linux with `VAKT_KERNEL=host`. Boot medium: SanDisk
 USB. Data disk: Seagate 1.8 TB SATA.
 
-**This pass never got past section 4.** Five separate bugs stood between the
-USB booting and the panel staying up, and finding them was the pass. Sections
-2, 5, 6, 8 and the A/B update section remain untested on any real machine.
+**Seven bugs stood between the USB booting and an operator getting into the
+panel**, and finding them was the pass. It ends with the appliance booting,
+mounting its data disk, and unlocking with a PIN. Sections 2, 5, 6, 8 and the
+A/B update section remain untested on any real machine.
 
 ### What passed
 
@@ -194,8 +195,11 @@ USB booting and the panel staying up, and finding them was the pass. Sections
 |---|---|
 | 1. Build and media | `sudo ./build.sh` completed; `dd` to USB booted on the target |
 | 3. GRUB menu | Both entries present, both selectable |
+| 3. Recovery entry | Boots to a root shell, panel skipped — after the fix below |
+| 4. Storage | `/persistent` mounts from the SATA disk, found by label |
 | 7. Keyboard input | Real USB keyboard reached the panel; Tab navigated forms correctly |
 | 7. Framebuffer | Readable at the machine's native resolution, no `ioctl` geometry problem |
+| 7. PIN entry | Lock screen accepts the stored PIN and unlocks — after both fixes below |
 
 ### What failed, and what it turned out to be
 
@@ -210,7 +214,19 @@ in a loop — which is why they had to be peeled off one at a time.
 | USB storage still absent after one module pass | one-shot modalias scan missed devices enumerating after their controller | 3-pass module loading |
 | `Could not run Vakt Panel: Permission denied` | **the image root itself shipped 0700** — `mktemp -d`'s mode ended up on the cpio's `.` entry, and the kernel chmods the real `/` to match, so the panel's unprivileged user couldn't traverse `/` | `chmod 755 "$ROOTFS"` before packing |
 
-Two more surfaced while working around the above:
+Then, with the appliance booting properly, a second cluster — all presenting
+as **"my PIN is correct and it will not let me in"**:
+
+| Symptom | Actual cause | Fix |
+|---|---|---|
+| Type the PIN, press Enter, nothing happens at all — no error, no attempt counter | tview's `Form` treats Enter on a field as "move to the next element", so the key never reached the Unlock button | `submitOnEnter`, on all three PIN forms |
+| Correct PIN refused; an ordinary first-boot setup screen instead of a lock screen | **the auth file was `uid=0 mode=600`** and the panel runs as `vakt` — every read got EACCES, and `storedPIN` reported that as "no PIN configured" | `privilege::adopt_file` at boot; a non-`ENOENT` read error is now `pinUnusable`, which says so in red |
+
+The file went root-owned because the PIN was set during a boot where the panel
+was still running as root — the recovery-shell bug below. `grant("/persistent/etc")`
+does not fix it, because `chown` on a directory does not recurse.
+
+Two more surfaced while working around all of the above:
 
 - The recovery GRUB entry still asked for a PIN. `vakt.rootshell` only changed
   which user got the *fallback* shell; it never skipped the panel. It now
@@ -218,6 +234,13 @@ Two more surfaced while working around the above:
 - `Could not save PIN: read-only file system` on the setup screen — correct
   behaviour with `/persistent` unmounted, but worth knowing it's what a
   storage failure looks like from the panel.
+
+An appliance already in the root-owned state is repaired without a rebuild,
+from any Linux machine with the data disk attached:
+
+```bash
+sudo chown 1000:1000 /mnt/vakt/etc/vakt-panel.auth   # the PIN itself is unaffected
+```
 
 ### Notes for the next machine
 
@@ -231,3 +254,12 @@ Two more surfaced while working around the above:
 - The console-loop backoff message added during this pass (`vakt-init` prints
   the exit status in red after 3 fast rounds) is what made the last two bugs
   legible. Read it before guessing.
+- **Check ownership before theorising about a rejected PIN.** `stat -c '%u %a'`
+  on the auth file takes seconds and would have answered it immediately; two
+  rounds went into keystroke theories first. Anything the panel must read has
+  to belong to uid 1000, and a `chown` on the parent directory does not make
+  that true of what is inside it.
+- Every bug in the second cluster was invisible to CI for the same reason as
+  the 0700 root: CI builds the image and only ever runs it as root, so no
+  permission the unprivileged user lacks can fail there.
+  `build-system/checkimage.sh` now catches the mode half of that class.
