@@ -32,8 +32,16 @@ fail() {
 }
 
 # The mode string cpio prints for an entry, or empty if the entry is absent.
+#
+# A symlink is listed as `bin/sh -> busybox`, so the name is not simply the
+# last field - most of this image's /bin is busybox symlinks, and reading the
+# last field finds the target instead and reports every applet as missing.
 mode_of() {
-  awk -v want="$1" '$NF == want { print $1; exit }' <<<"$LISTING"
+  awk -v want="$1" '
+    { line = $0; sub(/ -> .*$/, "", line)
+      n = split(line, field, " ")
+      if (field[n] == want) { print field[1]; exit } }
+  ' <<<"$LISTING"
 }
 
 exists() {
