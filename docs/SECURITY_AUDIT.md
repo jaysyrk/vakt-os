@@ -122,7 +122,16 @@ genuinely valid.
 and `chmod 600` afterwards. A redirect creates the file 0644 under the usual
 umask, so the key sat readable by every local user for the window between the
 two statements. Fixed by generating it under `umask 077` in a subshell, so it
-is never readable at any instant, and locking `build-system/keys/` to 0700.
+is never readable at any instant.
+
+The first attempt at that fix also locked `build-system/keys/` to 0700, and
+CI caught that as a mistake: the directory lives inside the working tree and
+`mkrepo.sh` runs as root during a full build, so a root-owned unreadable
+directory broke every later pass over the tree by another user -
+specifically `actions/cache`'s post-job `hashFiles('**/Cargo.lock')`, which
+walks the whole workspace. Reproduced locally before reverting it. The 0600
+file is what protects the secret; the directory mode only hid a filename
+that is documented anyway.
 
 **Passed in argv.** `zrpkg pack` took the key as a positional command-line
 argument, and `mkrepo.sh` read the file and passed the contents - once per

@@ -37,10 +37,12 @@ fi
 
 # --- Signing key -------------------------------------------------------------
 mkdir -p "$KEY_DIR"
-# The directory too, not just the key inside it: this is the one secret in
-# the project whose loss means an attacker can sign packages every appliance
-# already trusts.
-chmod 700 "$KEY_DIR"
+# Deliberately not chmod 700 on this directory. It lives inside the working
+# tree, and this script runs as root during a full build, so a root-owned
+# unreadable directory here breaks anything that later walks the tree as
+# another user - CI's own cache step does exactly that, and hashFiles()
+# failed on it. The 0600 key file below is what actually protects the secret;
+# the directory mode only hides a filename that is documented anyway.
 if [ ! -f "$KEY_FILE" ]; then
     echo "[+] Generating repository signing key..."
     # Written under a restrictive umask in a subshell rather than chmod'd
