@@ -126,7 +126,7 @@ worth knowing before scaling past it.
 
 **Fleet observability is a webhook, not a metrics pipeline.** `vakt-ids` can
 POST each alert as JSON to an operator-chosen URL
-([docs/OPERATIONS.md](docs/OPERATIONS.md#sending-ids-alerts-to-a-webhook-fleet-setups)),
+([docs/OPERATIONS.md](docs/OPERATIONS.md)),
 best-effort with a 5-second timeout and no retry - the alert file stays the
 durable record. Deliberately the smallest thing that gets alerts off a single
 box: a real metrics/logs pipeline (Prometheus exposition, structured log
@@ -134,7 +134,7 @@ shipping) is a much bigger surface and wasn't what "useful for anyone running
 more than one appliance" required.
 
 **Backup/restore covers `/persistent`, not the base image.** `vakt-backup`
-and `vakt-restore` ([docs/OPERATIONS.md](docs/OPERATIONS.md#backing-up-and-restoring-persistent))
+and `vakt-restore` ([docs/OPERATIONS.md](docs/OPERATIONS.md#backups))
 handle the one thing that's actually irreplaceable on a running appliance -
 the data disk. The base image is already reproducible from this repository,
 so it never needed a backup path; that's also why OS image updates (below)

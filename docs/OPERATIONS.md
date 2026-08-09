@@ -1,198 +1,304 @@
 # Operations Runbook
 
-For anyone running a deployed appliance day to day, not building or
-contributing to it. If you're looking for how the system works internally,
-see the [README](../README.md) and the wiki instead.
+For running a deployed appliance. If you want to know how it works inside,
+that's the [README](../README.md).
 
-## Health check
+---
 
-From the panel, or a shell if you have one:
+## Something's wrong — start here
+
+| What you're seeing | Go to |
+|---|---|
+| Locked out — forgot the PIN | [Get back in](#get-back-in) |
+| Panel opens and closes over and over | [The console loop](#the-console-loop) |
+| PIN is correct but won't unlock | [Get back in](#get-back-in) |
+| A service says `failed` | [A service won't stay up](#a-service-wont-stay-up) |
+| No network | [Network won't come up](#network-wont-come-up) |
+| IDS alert fired | [An IDS alert fired](#an-ids-alert-fired) |
+| Data disk missing / changes don't survive reboot | [The disk isn't mounting](#the-disk-isnt-mounting) |
+| You think it's compromised | [Start over safely](#start-over-safely) |
+
+---
+
+## The emergency card
+
+**Get a root shell, always:** reboot → GRUB menu → **Vakt OS (root recovery
+shell)**. It skips the panel entirely and hands you a root prompt. It works
+even when the panel is broken, locked, or crash-looping.
+
+> Skipping the panel needs a build from the current `main`. Older images
+> booted the panel first even with `vakt.rootshell` set, so the PIN screen
+> came up anyway. If that's what you're seeing, rebuild.
+
+**Is it healthy?**
 
 ```bash
-cat /run/services.status      # supervisor's view: state, pid, restarts, readiness
+cat /run/services.status      # each service: state, pid, restarts, readiness
 cat /run/vakt-net.status      # link state, address
 tail -50 /run/vakt-ids.alerts # recent integrity findings
 zrpkg repo                    # which repository this appliance fetches from
 ```
 
-A healthy appliance shows every supervised service as `running` with
-`ready`, a `connected` network state, and no unexplained `vakt-ids` findings.
+Healthy looks like: every service `running` + `ready`, network `connected`,
+no unexplained IDS findings.
 
-## Locked out of the panel (forgotten PIN)
+---
 
-1. Reboot and pick **Vakt OS (root recovery shell)** from the GRUB menu
-   instead of the plain **Vakt OS** entry. This boots with `vakt.rootshell`
-   on the kernel command line, which hands the console a root shell instead
-   of the panel.
-2. Delete the PIN file:
+## Get back in
+
+You forgot the PIN, or the correct PIN won't work.
+
+1. Reboot → GRUB menu → **Vakt OS (root recovery shell)**
+2. Delete the PIN:
    ```bash
    rm -f /persistent/etc/vakt-panel.auth
+   reboot
    ```
-   (If the appliance never had a persistent disk mounted, it's at
-   `/etc/vakt/panel.auth` in RAM instead, and is already gone at the next
-   reboot regardless.)
-3. Reboot normally. The panel comes up on the first-boot setup screen again.
+3. Boot normally. You'll get the first-boot setup screen.
 
-This is available to anyone with physical access to the console by design —
-see the README's Security model section for why that's an accepted
-trade-off, not an oversight.
+If no data disk ever mounted, the PIN lives at `/etc/vakt/panel.auth` in RAM
+instead — and is already gone at the next reboot either way.
 
-## A service won't start or keeps crash-looping
+**No console access?** Pull the data disk, plug it into another Linux
+machine, and do the same thing there:
 
-`vakt-init` gives up restarting a service after 5 crashes in 60 seconds, and
-the supervisor's status line for it will read `failed`.
+```bash
+sudo mkdir -p /mnt/vakt
+sudo mount -L VAKTDATA /mnt/vakt
+sudo rm -f /mnt/vakt/etc/vakt-panel.auth
+sudo umount /mnt/vakt
+```
 
-1. Read its log: `cat /run/<name>.log` (and `/run/<name>.log.1` for the
-   previous rotation, if the failure produced enough output to rotate).
-2. Common causes:
-   - **`vakt-net` failed**: usually a missing or malformed
-     `/persistent/etc/vakt-net.conf`. Rewrite it from the panel's Wi-Fi Setup
-     page, or check `ssid=`/`psk=`/`interface=` by hand.
-   - **`vakt-ids` failed**: check `/persistent` actually mounted (`No disk
-     labeled 'VAKTDATA' found` in the boot log means it's running in
-     RAM-only mode and has nothing to watch — not a crash, but worth
-     knowing).
-   - **A `zrpkg`-installed package's service failed**: reinstall it
-     (`zrpkg remove <name> && zrpkg install <name>`) in case the install was
-     interrupted or partial.
-3. To force a fresh restart budget without a full reboot, there's no live
-   "reset restart count" command by design (see `vakt-init/src/services.rs`)
-   — reboot the appliance.
+<details>
+<summary>Why a correct PIN can stop working</summary>
 
-## An IDS alert fired
+If the auth file gets damaged — a power cut mid-write, a bad disk — nothing
+verifies against it, including the right PIN.
 
-`vakt-ids` reports `ADDED`, `MODIFIED`, `DELETED`, or `PERMISSIONS` findings
-against its SHA-256 baseline of `/persistent`.
+Current builds detect this: an unreadable auth file is treated as *no PIN*
+and takes you to the setup screen with a **red** message saying the old one
+is gone. If you get a normal-looking lock screen instead, the file is intact
+and the PIN really is wrong.
 
-1. Read the finding: `tail -50 /run/vakt-ids.alerts` or the panel's
-   Intrusion Detection page.
-2. If the change was made by you deliberately (installed a package, edited a
-   config file), the baseline needs to catch up — it updates itself on the
-   next scan cycle automatically, so a repeat scan without the same finding
-   confirms it took.
-3. If the change was **not** something you made: treat the appliance as
-   compromised. This tool tells you something changed; it does not tell you
-   it's safe. Reimage from a known-good build rather than trying to clean an
-   appliance that's already shown signs of tampering — see
-   [Recovering a compromised or badly broken appliance](#recovering-a-compromised-or-badly-broken-appliance)
-   below.
+A healthy file is one line, 32 hex characters, a colon, then 64 more:
+
+```bash
+cat /persistent/etc/vakt-panel.auth
+```
+
+</details>
+
+> Anyone with physical access can do all of the above. That's deliberate —
+> see the README's Security model. The PIN stops a passer-by, not someone
+> with a screwdriver.
+
+---
+
+## The console loop
+
+The panel starts, exits immediately, drops to a shell, and repeats.
+
+**It will stop on its own.** After 3 fast rounds it backs off, waits, and
+prints the reason in red. Read that text — it names the exit status and, if
+the console couldn't be handed to the panel's user, says so.
+
+Most likely causes:
+
+| Message | Meaning |
+|---|---|
+| `Could not run ...: Permission denied` | The panel's user can't execute or reach the console — a build problem, not a runtime one. Rebuild from a current checkout. |
+| `... exited with status N` | The panel started and quit. Check the recovery shell for its output. |
+| `Could not give /dev/console to vakt` | `vakt-init` couldn't hand over the console device. |
+
+Get in with the recovery shell entry and investigate from there.
+
+---
+
+## A service won't stay up
+
+`vakt-init` stops restarting a service after **5 crashes in 60 seconds** and
+marks it `failed`.
+
+1. Read its log:
+   ```bash
+   cat /run/<name>.log          # and /run/<name>.log.1 for the previous one
+   ```
+2. Match the cause:
+
+| Service | Usual cause |
+|---|---|
+| `vakt-net` | Missing or malformed `/persistent/etc/vakt-net.conf`. Rewrite it from the panel's Wi-Fi Setup page, or check `ssid=` / `psk=` / `interface=` by hand. |
+| `vakt-ids` | `/persistent` never mounted — see [The disk isn't mounting](#the-disk-isnt-mounting). Not a crash; it just has nothing to watch. |
+| A `zrpkg` package | Reinstall it: `zrpkg remove <name> && zrpkg install <name>` |
+
+3. There's no live "reset the restart count" command, by design. Reboot.
+
+---
+
+## The disk isn't mounting
+
+Symptom: changes don't survive reboot, `vakt-ids` has nothing to watch, or
+the boot log says:
+
+```
+No disk labeled 'VAKTDATA' found. Running in RAM only mode.
+```
+
+The data disk is found **by filesystem label, never by device name** —
+device letters aren't stable between boots. Check from the recovery shell or
+another machine:
+
+```bash
+lsblk -o NAME,SIZE,LABEL
+```
+
+If the label is missing, that's the problem. Re-label an existing ext4 disk
+without wiping it:
+
+```bash
+sudo e2label /dev/sdX VAKTDATA
+```
+
+---
 
 ## Network won't come up
 
-1. `cat /run/vakt-net.status` — check `state`. `unconfigured` means no
-   `vakt-net.conf` exists yet (expected on a fresh appliance with no Wi-Fi
-   set up and no wired link). `failed` means it tried and couldn't.
-2. For Wi-Fi specifically: confirm the image was built with
-   `VAKT_KERNEL=host` — the `custom` kernel mode has no Wi-Fi chipset
-   firmware by design (see the README's Networking section).
-3. `cat /run/vakt-net.log` for `wpa_supplicant`/`udhcpc` output.
+1. Check the state:
+   ```bash
+   cat /run/vakt-net.status
+   ```
+   - `unconfigured` — no Wi-Fi set up and no wired link. Expected on a fresh
+     appliance.
+   - `failed` — it tried and couldn't.
+2. **Wi-Fi needs `VAKT_KERNEL=host`.** The `custom` kernel ships no chipset
+   firmware, on purpose.
+3. More detail:
+   ```bash
+   cat /run/vakt-net.log        # wpa_supplicant / udhcpc output
+   ```
 
-## Rotating the package-signing key
+---
 
-Covered in [`deploy/README.md`](../deploy/README.md#rotating-the-signing-key)
-— it's a repository-side operation (regenerate the key, rebuild and reship
-images with the new trust anchor), not something done on a running
-appliance.
+## An IDS alert fired
 
-## Backing up and restoring `/persistent`
-
-`vakt-backup` and `vakt-restore` ship in the image (`/usr/bin`, source in
-[`tools/vakt-backup`](../tools/vakt-backup) and
-[`tools/vakt-restore`](../tools/vakt-restore)) — no network access or extra
-tooling needed, they're already on the appliance.
-
-Run a backup periodically (by hand, or from cron/a systemd timer if you set
-one up — none ships by default) and copy the result somewhere other than the
-appliance itself, ideally onto a second USB drive or over the network. A
-backup that lives on the same disk it's backing up survives none of the
-failures worth planning for.
+`vakt-ids` reports `ADDED`, `MODIFIED`, `DELETED`, or `PERMISSIONS` against
+its SHA-256 baseline of `/persistent`.
 
 ```bash
-vakt-backup /persistent /mnt/usb/vakt-backup-$(date +%F).tar.gz
+tail -50 /run/vakt-ids.alerts
+```
+
+Or the panel's Intrusion Detection page.
+
+**Was it you?** (installed a package, edited a config) — nothing to do. The
+baseline catches up on the next scan; a repeat scan with no finding confirms
+it.
+
+**Was it not you?** Treat the appliance as compromised. This tool tells you
+something changed; it can't tell you it's safe. Go to
+[Start over safely](#start-over-safely).
+
+---
+
+## Start over safely
+
+There's deliberately no in-place "repair" for an appliance you no longer
+trust. Don't reason your way to certainty on a machine that might be lying
+to you.
+
+1. **Reimage** from a known-good `vakt-os.iso`:
+   ```bash
+   sudo dd if=vakt-os.iso of=/dev/sdX bs=4M status=progress conv=fsync
+   ```
+2. **Restore `/persistent` from a backup made *before* the incident** — not
+   from the current disk, which would carry the problem forward.
+3. **Rotate the signing key** if it might have been exposed. It lives only on
+   the build machine, so this is usually unnecessary — unless that machine
+   was in scope too. See
+   [`deploy/README.md`](../deploy/README.md#rotating-the-signing-key).
+4. **Set a new PIN** rather than restoring the old `vakt-panel.auth`.
+
+---
+
+## Backups
+
+Both tools ship inside the image — no network, no extra install.
+
+```bash
+vakt-backup  /persistent /mnt/usb/vakt-backup-$(date +%F).tar.gz
 vakt-restore /mnt/usb/vakt-backup-2026-08-07.tar.gz /persistent
 ```
 
-`vakt-restore` verifies the archive's `.sha256` checksum before touching
-anything, refuses a truncated or corrupted backup rather than partially
-restoring it, and refuses to restore into a destination that already has
-files in it (unmount `/persistent` and clear it, or restore to a fresh disk,
-first).
+> **Store it somewhere else.** A backup on the disk it's backing up survives
+> none of the failures worth planning for.
 
-## Sending IDS alerts to a webhook (fleet setups)
+Nothing runs backups automatically — no timer ships by default. `vakt-restore`
+checks the archive's SHA-256 before touching anything, refuses a corrupted
+one outright, and refuses to write into a destination that isn't empty.
 
-If you're running more than one appliance, `vakt-ids` can POST each alert as
-JSON to a URL you choose, instead of (or alongside) leaving them only in
-`/run/vakt-ids.alerts` on that one machine. Off by default — a single
-appliance has no need for it.
+---
 
-Because `vakt-init` supervises `vakt-ids` with a fixed set of startup
-arguments (see `vakt-init/src/services.rs`), the URL isn't set with a flag on
-a deployed appliance. Instead, write it to a one-line config file:
+<details>
+<summary><b>Updating the OS image itself</b></summary>
+
+> **Never survived a real reboot yet.** Read [OS_UPDATES.md](OS_UPDATES.md)
+> first, and confirm the recovery GRUB entry works on this specific machine
+> before you try it.
+
+`zrpkg` updates packages. It does **not** update the kernel, `vakt-init`, or
+anything else baked into the image — that's `vakt-update`.
+
+Slot A (the boot medium) is never written to. An update lands as slot B on
+`/persistent`, and `vakt-init` rolls back to slot A on its own if slot B
+doesn't reach a working boot within 3 attempts. No operator action needed for
+a bad update to correct itself.
+
+```bash
+vakt-update check     # what's staged, what's available
+vakt-update apply     # fetch, verify, stage slot B
+reboot
+```
+
+After rebooting, **confirm it actually came up** (panel reachable,
+`/run/services.status` healthy) before trusting the update. If it silently
+fails to reach readiness, the rollback happens on the *next* reboot, not this
+one.
+
+There's no "roll back now" command — to force it, reimage from slot A.
+
+</details>
+
+<details>
+<summary><b>Sending IDS alerts to a webhook (fleet setups)</b></summary>
+
+For more than one appliance. Off by default.
+
+`vakt-init` supervises `vakt-ids` with a fixed argument list, so the URL goes
+in a one-line config file rather than a flag:
 
 ```bash
 echo "https://your-collector.example.com/vakt-ids" > /persistent/etc/vakt-ids-webhook.conf
 ```
 
-Picked up on the next `vakt-ids` start (reboot, or restart the service).
-Each alert POSTs a JSON body:
+Picked up on the next `vakt-ids` start. Each alert POSTs:
 
 ```json
 {"host": "appliance-3", "time": "2026-08-07T12:00:00Z", "kind": "MODIFIED", "detail": "/persistent/etc/passwd"}
 ```
 
-Delivery is best-effort with a 5-second timeout: a slow or unreachable
-collector logs a warning and never blocks scanning or crashes the daemon.
-There's no retry — the alert file is still the durable record; the webhook
-is a notification, not a queue.
+Best-effort, 5-second timeout, no retry. A slow or unreachable collector logs
+a warning and never blocks scanning or crashes the daemon — the alert file
+stays the durable record.
 
-## Updating the OS image itself
+</details>
 
-> **Unvalidated on real hardware as of this writing.** Read
-> [OS_UPDATES.md](OS_UPDATES.md) before applying this to an appliance you
-> can't get physical console access to. Confirm `vakt.rootshell` works on
-> this specific machine first.
+<details>
+<summary><b>Rotating the package-signing key</b></summary>
 
-`zrpkg` updates packages; it does not update the kernel, `vakt-init`, or any
-other tool baked into the image itself. That's what `vakt-update` is for -
-an A/B mechanism where the boot medium (slot A) is never touched, an update
-lands as slot B on `/persistent`, and the appliance automatically rolls back
-to slot A on its own if slot B doesn't reach a working boot within 3
-attempts - no operator action needed for a bad update to self-correct.
+A repository-side operation, not something done on a running appliance:
+regenerate the key, rebuild and reship images carrying the new trust anchor.
 
-```bash
-vakt-update check              # what's staged, what's available
-vakt-update apply              # fetch, verify, stage slot B
-reboot                         # boots into slot B
-```
+Full procedure in
+[`deploy/README.md`](../deploy/README.md#rotating-the-signing-key).
 
-After rebooting, confirm the appliance actually came up normally (panel
-reachable, `cat /run/services.status` looks healthy) before assuming the
-update is good - if it silently fails to reach readiness, vakt-init will
-already be counting down toward an automatic rollback on the *next* reboot,
-not this one. If you want to force a rollback yourself rather than wait for
-it, reimage from slot A (see
-[Recovering a compromised or badly broken appliance](#recovering-a-compromised-or-badly-broken-appliance)
-below) - there is currently no operator-invoked "roll back now" command
-short of that.
-
-## Recovering a compromised or badly broken appliance
-
-There is deliberately no in-place "repair" path for an appliance you no
-longer trust — a read-only root and mandatory package signing mean the base
-system can't have been quietly modified without leaving a kernel-log or
-IDS trail, but if you're not sure, don't try to reason your way to certainty
-on a machine that might be lying to you.
-
-1. Reimage: rebuild or reuse a known-good `vakt-os.iso` and write it fresh
-   (`sudo dd if=vakt-os.iso of=/dev/sdX ...`).
-2. Restore `/persistent` from the most recent backup made *before* the
-   incident, not the appliance's current disk — copying the live data disk
-   forward would carry over whatever caused the IDS alert in the first
-   place.
-3. Rotate the package-signing key if there's any chance it was exposed
-   (it lives only on the build machine, never the appliance, so this is
-   usually unnecessary — but confirm that build machine wasn't itself in
-   scope of the incident).
-4. Set a new panel PIN on first boot rather than restoring the old
-   `vakt-panel.auth` file, if there's any chance the PIN was observed or
-   guessed.
+</details>
