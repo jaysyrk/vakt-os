@@ -69,6 +69,27 @@ if [ "$root_mode" != "drwxr-xr-x" ]; then
   fail "the image root is $root_mode, not drwxr-xr-x - the panel's user will not be able to traverse /"
 fi
 
+# The kernel execs /init and panics with "No working init found" if it cannot.
+# It reports exactly the same thing when /init is present but unrunnable, so
+# the mode and the dynamic loader are both worth asserting here rather than
+# discovering from a panic screen.
+init_mode=$(mode_of "init")
+if [ -z "$init_mode" ]; then
+  fail "there is no /init - the kernel will panic with 'No working init found'"
+else
+  case "${init_mode%[.+]}" in
+    -??x*) ;;
+    *) fail "/init is $init_mode - the kernel cannot execute it" ;;
+  esac
+fi
+
+# A dynamically linked /init whose interpreter is missing fails execve with
+# ENOENT, which the kernel also reports as no working init - naming a file that
+# is plainly there.
+if ! grep -q 'ld-linux\|ld-musl' <<<"$LISTING"; then
+  fail "no dynamic loader (ld-linux/ld-musl) in the image - a dynamically linked /init cannot start"
+fi
+
 # Anything the panel's user has to walk through or run.
 for dir in usr usr/bin bin lib usr/lib etc sbin usr/sbin; do
   exists "$dir" || continue
@@ -102,4 +123,5 @@ if [ "$failures" -ne 0 ]; then
   exit 1
 fi
 
-echo "[+] $ARCHIVE looks sane: root 0755, panel path traversable, modprobe not shadowed."
+echo "[+] $ARCHIVE looks sane: /init runnable, root 0755, panel path traversable, \
+modprobe not shadowed."

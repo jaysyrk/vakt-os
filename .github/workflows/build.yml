@@ -82,13 +82,15 @@ jobs:
           # faults that have actually shipped.
           WORK=$(mktemp -d)
           mkdir -p "$WORK/img"/{usr/bin,bin,lib/modules}
-          touch "$WORK/img"/{usr/bin/vakt-panel,bin/busybox,usr/bin/modprobe}
+          mkdir -p "$WORK/img/lib64"
+          touch "$WORK/img"/{init,usr/bin/vakt-panel,bin/busybox,usr/bin/modprobe} \
+            "$WORK/img/lib64/ld-linux-x86-64.so.2"
           # /bin/sh is a busybox symlink in the real image, and cpio lists a
           # symlink as `bin/sh -> busybox` - so the fixture has to be a
           # symlink too, or the listing parser never gets tested on one.
           ln -s busybox "$WORK/img/bin/sh"
-          chmod 755 "$WORK/img" "$WORK/img"/usr/bin/vakt-panel "$WORK/img"/bin/busybox \
-            "$WORK/img"/usr/bin/modprobe
+          chmod 755 "$WORK/img" "$WORK/img"/init "$WORK/img"/usr/bin/vakt-panel \
+            "$WORK/img"/bin/busybox "$WORK/img"/usr/bin/modprobe
           pack() { (cd "$WORK/img" && find . -print0 |
             cpio --null -o --format=newc 2>/dev/null | gzip -1 > "$1"); }
 
@@ -104,7 +106,11 @@ jobs:
           if ./build-system/checkimage.sh "$WORK/shadow.cpio.gz" 2>/dev/null; then
             echo "::error::checkimage.sh passed an image with busybox modprobe shadowing kmod"; exit 1
           fi
-          echo "checkimage.sh rejects both known-bad images"
+          chmod 644 "$WORK/img/init" && pack "$WORK/deadinit.cpio.gz"
+          if ./build-system/checkimage.sh "$WORK/deadinit.cpio.gz" 2>/dev/null; then
+            echo "::error::checkimage.sh passed an image whose /init is not executable"; exit 1
+          fi
+          echo "checkimage.sh rejects the known-bad images"
 
       - name: GRUB config syntax check
         run: |
