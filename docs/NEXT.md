@@ -39,7 +39,7 @@ Full checklist in [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md).
 | Secure Boot | ❌ never attempted |
 | Panel Lock PIN change | ❌ writing that file as the panel's user has never succeeded anywhere |
 | Framebuffer compositor | ❌ never run on a real display |
-| Shutdown / poweroff | ❌ never confirmed to actually power a machine off |
+| Shutdown / poweroff | ⚠️ `poweroff` from a shell works on real hardware; the panel's `SHUTDOWN=` path is untested |
 | A/B image updates | ❌ never survived one reboot |
 
 **The `host` kernel path has no CI coverage and never can** — it is defined by

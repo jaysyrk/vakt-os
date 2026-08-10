@@ -113,6 +113,18 @@ present and whether its carrier is detected.
 
 ## 9. Shutdown
 
+`poweroff` from a shell has been confirmed on real hardware - it powers the
+machine off, so the board's ACPI support is fine. It was noticeably slow, and
+that turned out to be a bug rather than the hardware: PID 1 blocks the shutdown
+signals to read them off a signalfd, a signal mask survives `execve`, and
+nothing cleared it in the children - so every daemon ran with `SIGTERM` blocked,
+ignored the polite stop, and was killed outright after the full five-second
+grace period. Fixed; the delay should be gone.
+
+Note that `poweroff` and the panel's shutdown are different paths: the first
+signals PID 1, the second sends `SHUTDOWN=` over `/run/init.sock`. One working
+says nothing about the other.
+
 - [ ] Panel-initiated reboot/poweroff/halt all work (this is the path that
       exercises `/run/init.sock`'s `SHUTDOWN=` message, unprivileged panel to
       privileged PID 1 — confirm it isn't silently swallowed on this

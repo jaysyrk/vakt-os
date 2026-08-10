@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::File;
 use std::io::Write;
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
@@ -324,6 +325,23 @@ impl Managed {
         let mut cmd = Command::new(self.spec.program);
         cmd.args(self.spec.args);
         cmd.stdin(Stdio::null());
+
+        // A signal mask survives execve, and PID 1 blocks the shutdown signals
+        // so it can take them on a signalfd instead. Without clearing it here
+        // every daemon inherits a blocked SIGTERM: `stop_all` asks politely,
+        // nothing hears it, and shutdown waits out the whole grace period
+        // before killing the process outright - on every single shutdown.
+        //
+        // SAFETY: runs in the forked child between fork and exec, where only
+        // async-signal-safe calls are allowed. sigprocmask qualifies, and
+        // nothing here allocates.
+        unsafe {
+            cmd.pre_exec(|| {
+                nix::sys::signal::SigSet::empty()
+                    .thread_set_mask()
+                    .map_err(std::io::Error::from)
+            });
+        }
 
         let reader_and_log = match piped {
             Ok((reader, writer, duplicate, log)) => {
@@ -744,6 +762,58 @@ mod tests {
             after
         );
 
+        if let Some(child) = sup.services[0].child.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A daemon must not inherit PID 1's blocked shutdown signals.
+    ///
+    /// A signal mask survives execve. PID 1 blocks SIGTERM (among others) so it
+    /// can read them off a signalfd, and without clearing the mask in the child
+    /// every service runs with SIGTERM blocked: stop_all's polite request is
+    /// ignored, shutdown waits out the whole grace period, and every daemon is
+    /// killed outright on every single shutdown.
+    ///
+    /// Read back out of /proc rather than assumed, because the property being
+    /// tested is precisely what the kernel did across a fork and an exec.
+    #[test]
+    fn a_spawned_service_does_not_inherit_a_blocked_sigterm() {
+        use nix::sys::signal::{SigSet, Signal};
+
+        let dir = scratch("sigmask");
+        let mut sup = supervisor(LONG_RUNNING, dir.clone());
+
+        // Stand in for what PID 1 does at boot.
+        let mut blocked = SigSet::empty();
+        blocked.add(Signal::SIGTERM);
+        blocked.thread_block().unwrap();
+
+        sup.start_all();
+        let pid = sup.services[0].pid().expect("service should be running");
+
+        let status = std::fs::read_to_string(format!("/proc/{}/status", pid)).unwrap();
+        let sigblk = status
+            .lines()
+            .find_map(|l| l.strip_prefix("SigBlk:"))
+            .expect("SigBlk in /proc/<pid>/status")
+            .trim()
+            .to_string();
+        let blocked_bits = u64::from_str_radix(&sigblk, 16).unwrap();
+
+        // SIGTERM is 15, so bit 14 in the mask /proc reports.
+        let sigterm_bit = 1u64 << (Signal::SIGTERM as i32 - 1);
+        assert_eq!(
+            blocked_bits & sigterm_bit,
+            0,
+            "the child inherited a blocked SIGTERM (SigBlk={}); it will ignore \
+             stop_all and be killed after the grace period instead",
+            sigblk
+        );
+
+        let _ = SigSet::empty().thread_set_mask();
         if let Some(child) = sup.services[0].child.as_mut() {
             let _ = child.kill();
             let _ = child.wait();

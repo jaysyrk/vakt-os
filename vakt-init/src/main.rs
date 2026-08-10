@@ -362,16 +362,33 @@ fn run_on_console(
         command.env(key, value);
     }
 
+    let drop_to = identity.map(|id| (id.uid, id.gid));
     if let Some(id) = identity {
-        let (uid, gid) = (id.uid, id.gid);
         command.env("HOME", &id.home);
         command.env("USER", &id.name);
         command.current_dir(&id.home);
-        // Runs in the forked child between fork and exec, so the program on the
-        // other side of exec can never have been root.
-        unsafe {
-            command.pre_exec(move || privilege::become_user(uid, gid));
-        }
+    }
+
+    // Runs in the forked child between fork and exec, so the program on the
+    // other side of exec can never have been root.
+    //
+    // The mask is cleared first and unconditionally. PID 1 blocks the shutdown
+    // signals to read them off a signalfd, a signal mask survives execve, and
+    // an inherited one leaves the panel and the recovery shell running with
+    // SIGINT blocked - which is a shell where ctrl-c does nothing.
+    //
+    // SAFETY: both calls are async-signal-safe and neither allocates, which is
+    // the whole constraint on this side of the fork.
+    unsafe {
+        command.pre_exec(move || {
+            nix::sys::signal::SigSet::empty()
+                .thread_set_mask()
+                .map_err(std::io::Error::from)?;
+            if let Some((uid, gid)) = drop_to {
+                privilege::become_user(uid, gid)?;
+            }
+            Ok(())
+        });
     }
 
     let mut child = command.spawn()?;
