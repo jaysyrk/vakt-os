@@ -28,7 +28,7 @@
 
 | [Roadmap](ROADMAP.md) |
 
-**Claude was used solely for .md formats, .sh scripts, and git push automation**
+**Claude was used solely for .md formats, .sh scripts, verification, syntax error surfing, and git push automation**
 
 **A small, immutable Linux security appliance: read-only root, signed-only
 packages, sandboxed services.** Its init, package manager, service supervisor,
