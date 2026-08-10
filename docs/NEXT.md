@@ -39,6 +39,11 @@ Full checklist in [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md).
 | Shutdown / poweroff | ⚠️ `poweroff` from a shell works on real hardware; the panel's `SHUTDOWN=` path is untested |
 | A/B image updates | ❌ never survived one reboot |
 
+CI now boots the image it builds — `build-system/boottest.sh` runs it headless
+under QEMU over a serial console and checks it reaches a shell, seals the
+root, starts both daemons, and can exec as the unprivileged user. It fails on
+an image with the 0700 root that shipped, which is the point of it.
+
 **The `host` kernel path has no CI coverage and never can** — it is defined by
 matching the running kernel, so it cannot be built in a container. Every
 `VAKT_KERNEL=host` change is only ever tested by someone building it on a real

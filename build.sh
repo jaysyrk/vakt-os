@@ -421,6 +421,14 @@ menuentry "Vakt OS (root recovery shell)" {
     initrd /boot/initramfs.img
 }
 
+# For a headless VM or a serial cable: everything goes to ttyS0 instead of the
+# screen, so the whole boot is text you can capture. Left off the entries above
+# so a normal boot on real hardware is unaffected.
+menuentry "Vakt OS (serial console)" {
+    linux /boot/vmlinuz ro lsm=landlock,yama console=ttyS0,115200
+    initrd /boot/initramfs.img
+}
+
 menuentry "Vakt OS (update slot B)" {
     search --no-floppy --label VAKTDATA --set=vakt_data
     linux ($vakt_data)/vakt-update/B/vmlinuz ro lsm=landlock,yama

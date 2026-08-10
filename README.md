@@ -70,6 +70,13 @@ qemu-system-x86_64 -m 8G -enable-kvm \
 
 That's it. You'll land on a PIN setup screen, then the panel.
 
+Headless, over SSH or from a phone — pick **Vakt OS (serial console)** at the
+GRUB menu and the whole boot is text in your terminal:
+
+```bash
+qemu-system-x86_64 -m 8G -display none -serial stdio -cdrom vakt-os.iso
+```
+
 > **Give it plenty of RAM.** The initramfs *is* the root filesystem, so it all
 > has to fit in memory — and during boot the compressed copy and the unpacked
 > one exist at once. Too little RAM and the kernel panics with

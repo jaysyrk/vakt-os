@@ -257,7 +257,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm git rust go zig base-devel sudo \
             grub xorriso cpio gzip mtools wget curl wpa_supplicant kmod \
-            bc flex bison openssl perl xz e2fsprogs
+            bc flex bison openssl perl xz e2fsprogs qemu-system-x86
 
       - uses: actions/checkout@v4
 
@@ -298,6 +298,25 @@ jobs:
       # real hardware. Read the modes straight out of the archive instead.
       - name: Check the packed initramfs
         run: ./build-system/checkimage.sh /tmp/vakt-initramfs.cpio.gz
+
+      # Building the image was never the same as it working. A kernel panic,
+      # an unusable root directory and a panel crash loop all got through a
+      # green build, because nothing ever ran what the build produced.
+      - name: Boot the image
+        run: |
+          set -eu
+          xorriso -osirrox on -indev vakt-os.iso -extract /boot/vmlinuz /tmp/vmlinuz
+          BOOT_LOG=/tmp/boot.log ./build-system/boottest.sh \
+            /tmp/vmlinuz /tmp/vakt-initramfs.cpio.gz "$PWD/vakt-data.img"
+
+      - name: Boot log
+        if: always()
+        run: |
+          if [ -f /tmp/boot.log ]; then
+            { echo '### Boot log'; echo; echo '```'
+              tr -d '\000' < /tmp/boot.log | tail -60; echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Build and apply an update bundle end to end
         env:
