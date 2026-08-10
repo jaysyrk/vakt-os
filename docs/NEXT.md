@@ -4,9 +4,6 @@
 working list: what to do next, in what order, and what is deliberately not
 being done yet.
 
-Move things out of here as they land. An item that has been "next" for months
-is either not next or not real — say which.
-
 ---
 
 ## Blocking everything else
