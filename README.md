@@ -26,6 +26,11 @@
               . .
 ```
 
+[![build](https://img.shields.io/github/actions/workflow/status/jaysyrk/vakt-os/build.yml?branch=main&style=flat-square&label=build%20%2B%20boot%20test)](https://github.com/jaysyrk/vakt-os/actions/workflows/build.yml)
+[![license](https://img.shields.io/github/license/jaysyrk/vakt-os?style=flat-square&color=blue)](LICENSE)
+[![written in](https://img.shields.io/badge/written%20in-Rust%20%C2%B7%20Go%20%C2%B7%20Zig-b7410e?style=flat-square)](#whats-in-it)
+[![no systemd](https://img.shields.io/badge/systemd-none-8b0000?style=flat-square)](#how-it-boots)
+
 | [Roadmap](ROADMAP.md) |
 
 **Claude was used solely for .md formats, .sh scripts, verification, syntax error surfing, and git push automation**
