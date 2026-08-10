@@ -151,6 +151,18 @@ The five things this project exists to demonstrate:
 
 Plus: boot-time kernel hardening sysctls, and a PIN gate on the panel.
 
+**There is no central repository, and no vendor key.** The first build on your
+machine generates a signing key that never leaves it, and bakes *your* public
+key into *your* image as the only key it will ever trust. Point it at a server
+you run — `zrpkg repo <url>` — and the supply chain is yours end to end: you
+sign, you host, your appliance verifies against your key. Nobody, including
+this project, can publish something your appliance will install.
+
+That is also why a prebuilt `vakt-os.iso` from the releases page cannot install
+packages. It trusts whichever key the CI runner generated, and that key was
+destroyed with the runner. The ISO is for looking at; **build your own to use
+one.**
+
 <details>
 <summary><b>Known trade-offs (click)</b></summary>
 
@@ -196,12 +208,21 @@ First run generates a signing key at `build-system/keys/repo.key` (gitignored,
 mode 0600). Every package is signed, then independently re-checked with
 `vakt-verify` before it's published.
 
-Publish to a rented server:
+Host it yourself, anywhere:
 
 ```bash
 zrpkg repo https://packages.example.com
 ./deploy/publish.sh user@vps.example.com
 ```
+
+`publish.sh` signs locally and copies only the signed output, so **the signing
+key never touches the server**. A server that is fully compromised still cannot
+produce a package your appliance will accept — it can withhold updates or serve
+stale ones, which is why the appliance verifies rather than trusts.
+
+For one appliance on your own network you do not need a server at all: run
+`zrpkg-server -dir tools/repo` on the build machine and point the appliance at
+its address.
 
 See [`deploy/README.md`](deploy/README.md) for the systemd unit, TLS, and rate
 limiting.
