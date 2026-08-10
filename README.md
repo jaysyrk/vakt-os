@@ -369,6 +369,7 @@ deploy/                     Running the repository on a rented server
 docs/OPERATIONS.md          Runbook: lockouts, crash loops, IDS alerts, backups
 docs/SECURITY_AUDIT.md      Findings, unsafe-block review, fuzzing notes
 docs/HARDWARE_VALIDATION.md Checklist for testing on real hardware
+docs/NEXT.md                What's being worked on next, and what isn't
 docs/OS_UPDATES.md          A/B update design and what's actually verified
 .github/workflows/build.yml CI: tests, package pipeline, ISO artifact
 ```

@@ -196,7 +196,10 @@ it on real hardware: [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md#o
   panel crash loop. Two more sat behind the PIN screen once it did boot: an
   Enter key that moved focus instead of submitting, and an auth file left
   root-owned and 0600 that the unprivileged panel could not read — reported,
-  wrongly, as "no PIN configured". Secure Boot, wired and Wi-Fi networking,
-  package install, IDS alerting and shutdown remain untested anywhere.
+  wrongly, as "no PIN configured". IDS alerting and the read-only root have
+  since been confirmed on a booted appliance, and wired DHCP under QEMU.
+  Secure Boot, Wi-Fi on a radio, package install from an appliance, the
+  compositor on a real display, and shutdown remain untested anywhere.
   [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md) is the
-  checklist and now carries the results so far.
+  checklist and now carries the results so far;
+  [docs/NEXT.md](docs/NEXT.md) is what happens next.
