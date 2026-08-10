@@ -58,6 +58,7 @@ cat /run/services.status      # each service: state, pid, restarts, readiness
 cat /run/vakt-net.status      # link state, address
 tail -50 /run/vakt-ids.alerts # recent integrity findings
 zrpkg repo                    # which repository this appliance fetches from
+zrpkg list                    # what is installed on it
 ```
 
 Healthy looks like: every service `running` + `ready`, network `connected`,

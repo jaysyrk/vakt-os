@@ -175,7 +175,8 @@ Plus: boot-time kernel hardening sysctls, and a PIN gate on the panel.
 <summary><b>Packages</b></summary>
 
 ```bash
-zrpkg update              # list what's available
+zrpkg update              # list what the repository offers
+zrpkg list                # list what's installed here
 zrpkg install <name>      # resolve, fetch, verify, install
 zrpkg verify <name>       # check signature without installing
 zrpkg remove <name>       # delete exactly what was installed

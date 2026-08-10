@@ -23,6 +23,8 @@ pub enum Commands {
     },
     /// List what the repository offers.
     Update,
+    /// List what is installed on this system.
+    List,
     /// Show the repository this system fetches from, or point it at another.
     Repo {
         /// New repository URL, e.g. https://packages.example.com. Omit to show

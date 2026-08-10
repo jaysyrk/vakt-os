@@ -218,6 +218,19 @@ jobs:
             echo "dependencies were not installed first"; cat "$WORK/install.log"; exit 1;
           }
 
+          "$ZRPKG" list > "$WORK/list.log"
+          for pkg in base mid tool; do
+            grep -q "$pkg" "$WORK/list.log" || {
+              echo "zrpkg list did not report $pkg"; cat "$WORK/list.log"; exit 1;
+            }
+          done
+          grep -q 'needs mid' "$WORK/list.log" || {
+            echo "zrpkg list did not report dependencies"; cat "$WORK/list.log"; exit 1;
+          }
+          ZRPKG_ROOT="$WORK/empty-root" "$ZRPKG" list | grep -q 'Nothing installed' || {
+            echo "zrpkg list should say so when nothing is installed"; exit 1;
+          }
+
           if "$ZRPKG" remove base 2>/dev/null; then
             echo "removing a depended-on package should have failed"; exit 1
           fi

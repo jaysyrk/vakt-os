@@ -20,6 +20,43 @@ fn install_root() -> PathBuf {
     PathBuf::from(std::env::var("ZRPKG_ROOT").unwrap_or_else(|_| "/opt/vakt".to_string()))
 }
 
+/// What is installed under `root`, as the operator sees it.
+///
+/// Built as a string rather than printed directly so the formatting is
+/// testable: this is the answer to "what is on this appliance", which is the
+/// first question anyone asks after an IDS finding names a file, and it should
+/// not be the one output nobody ever checks.
+fn installed_report(root: &std::path::Path) -> String {
+    use std::fmt::Write;
+
+    let packages = db::Database::new(root).installed();
+    if packages.is_empty() {
+        return format!(
+            "Nothing installed under {}.\n\nSee what is available with: zrpkg update\n",
+            root.display()
+        );
+    }
+
+    let widest = packages.iter().map(|p| p.name.len()).max().unwrap_or(0);
+    let mut out = String::new();
+    let _ = writeln!(out, "Installed under {}:\n", root.display());
+    for package in &packages {
+        let _ = write!(
+            out,
+            "  {:width$}  {}",
+            package.name,
+            package.version,
+            width = widest
+        );
+        if !package.dependencies.is_empty() {
+            let _ = write!(out, "   (needs {})", package.dependencies.join(", "));
+        }
+        let _ = writeln!(out);
+    }
+    let _ = writeln!(out, "\n{} package(s).", packages.len());
+    out
+}
+
 /// Points this system at a different repository.
 ///
 /// The setting goes on the persistent disk, not into the image: the root
@@ -79,6 +116,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Update => {
             repo::sync_repos().await?;
         }
+        Commands::List => {
+            print!("{}", installed_report(&install_root()));
+        }
         Commands::Repo { url } => match url {
             Some(url) => set_repository(url)?,
             None => {
@@ -127,4 +167,69 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use db::{Database, InstalledPackage};
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("zrpkg-list-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn record(root: &std::path::Path, name: &str, version: &str, deps: &[&str]) {
+        Database::new(root)
+            .record(&InstalledPackage {
+                name: name.to_string(),
+                version: version.to_string(),
+                dependencies: deps.iter().map(|s| s.to_string()).collect(),
+                files: vec![format!("usr/bin/{}", name)],
+                installed_at: db::now(),
+            })
+            .unwrap();
+    }
+
+    /// An appliance with nothing installed must say so plainly, and point
+    /// somewhere useful - an empty listing that looks like a failure sends an
+    /// operator hunting for a problem that is not there.
+    #[test]
+    fn an_empty_install_root_says_so_rather_than_printing_nothing() {
+        let root = scratch("empty");
+        let report = installed_report(&root);
+        assert!(report.contains("Nothing installed"), "{}", report);
+        assert!(report.contains("zrpkg update"), "{}", report);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn installed_packages_are_listed_with_versions_and_dependencies() {
+        let root = scratch("listing");
+        record(&root, "vakt-ids", "1.0.0", &[]);
+        record(&root, "tool", "2.1.0", &["vakt-ids"]);
+
+        let report = installed_report(&root);
+        assert!(report.contains("vakt-ids"), "{}", report);
+        assert!(report.contains("1.0.0"), "{}", report);
+        assert!(report.contains("2.1.0"), "{}", report);
+        assert!(
+            report.contains("needs vakt-ids"),
+            "a package's dependencies are why it cannot simply be removed: {}",
+            report
+        );
+        assert!(report.contains("2 package(s)"), "{}", report);
+
+        // Sorted, so the same appliance always reports the same order.
+        let ids = report.find("vakt-ids").unwrap();
+        let tool = report
+            .find("tool  ")
+            .or_else(|| report.find("tool "))
+            .unwrap();
+        assert!(tool < ids, "expected alphabetical order:\n{}", report);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
