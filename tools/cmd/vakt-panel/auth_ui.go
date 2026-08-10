@@ -33,17 +33,12 @@ func authGateRoot(app *tview.Application, mainLayout, focusAfter tview.Primitive
 	return setupScreen(unlock, pinDamaged())
 }
 
-// submitOnEnter makes Enter inside any of the form's input fields run submit.
+// submitOnEnter makes Enter inside a form's input fields run submit.
 //
-// tview's Form treats Enter on a field as "move to the next element", so a
-// PIN form built the obvious way swallows the Enter every person presses
-// after typing: focus shifts to the button and nothing else happens - no
-// attempt, no error message, no counter. The correct PIN looks broken, and on
-// a lock screen that is the difference between getting in and not.
-//
-// The capture goes on the fields rather than the form because the focused
-// primitive is the field itself, and that is what the application hands the
-// event to - a capture on the form would never run.
+// tview's Form treats Enter as "move to the next element", so without this a
+// PIN form swallows it: focus shifts to the button and nothing happens, and a
+// correct PIN looks broken. The capture goes on the fields, not the form -
+// the focused field is what the application hands the event to.
 func submitOnEnter(form *tview.Form, submit func()) {
 	for i := 0; i < form.GetFormItemCount(); i++ {
 		input, ok := form.GetFormItem(i).(*tview.InputField)
@@ -145,8 +140,7 @@ func setupScreen(unlock func(), damaged bool) tview.Primitive {
 	}
 	form.AddButton("Set PIN", save)
 	form.AddButton("Skip (not recommended)", unlock)
-	// Enter saves; Skip stays a deliberate Tab-and-press, which is the right
-	// way round for a step whose whole point is not being breezed past.
+	// Enter saves; Skip stays a deliberate Tab-and-press.
 	submitOnEnter(form, save)
 	form.SetBorder(true).SetTitle(" Protect This Panel ")
 

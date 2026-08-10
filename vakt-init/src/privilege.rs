@@ -155,18 +155,12 @@ pub fn grant_file(path: &Path, identity: &Identity) {
     }
 }
 
-/// Hands an *existing* file to `identity`, and does nothing if it is absent.
+/// Hands an *existing* file to `identity`, doing nothing if it is absent.
 ///
-/// Unlike [`grant_file`], this never creates the file. That difference is the
-/// whole point for the panel's stored PIN: an empty file there is not "no PIN
-/// set", it is "a PIN that cannot be parsed", which makes the panel announce
-/// that the old PIN is gone on an appliance that never had one.
-///
-/// It exists because `chown` on a directory does not recurse, so
-/// `grant("/persistent/etc")` leaves a root-owned file inside it root-owned.
-/// A 0600 file the panel's user cannot read is one the panel treats as no PIN
-/// at all - so a correct PIN is rejected forever, with no way to tell from the
-/// console that ownership is what went wrong.
+/// Needed because `chown` on a directory does not recurse: a root-owned file
+/// inside a granted directory stays root-owned, and the panel then cannot read
+/// it. Never creates the file, unlike [`grant_file`] - an empty auth file
+/// parses as a damaged PIN rather than as no PIN.
 pub fn adopt_file(path: &Path, identity: &Identity) {
     if !path.exists() {
         return;

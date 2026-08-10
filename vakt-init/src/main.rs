@@ -118,14 +118,9 @@ fn main() {
             );
             privilege::grant_console(id);
             privilege::grant(Path::new(&id.home), id);
-            // Created before vakt-ids starts, so the daemon appends to a file
-            // the panel can already read. vakt-ids runs as root and would
-            // otherwise create it 0600 root-owned on its first finding, which
-            // the panel cannot open at all - and an unreadable alert file is
-            // worse than no alert file, because the page renders it as "no
-            // alerts recorded". Not gated on persistent storage: /run is a
-            // tmpfs that exists either way, and an appliance in RAM-only mode
-            // still reports findings.
+            // vakt-ids runs as root and would create this 0600 root-owned on
+            // its first finding, which the panel cannot read. Not gated on
+            // persistent storage: /run exists either way.
             privilege::grant_file(Path::new(IDS_ALERTS), id);
             if persistent {
                 privilege::grant(Path::new(ZRPKG_ROOT), id);
@@ -134,10 +129,8 @@ fn main() {
                 // Landlock ruleset can name a path that already exists - and
                 // owned by the panel's user, so the panel can rewrite it.
                 privilege::grant_file(Path::new(VAKT_NET_CONF), id);
-                // Adopted, never created: an auth file written while the panel
-                // was running as root stays root-owned and 0600 forever, and
-                // the panel then cannot read the PIN it is meant to check
-                // against - so it reports no PIN and refuses the correct one.
+                // Adopted, never created: an empty auth file parses as a
+                // damaged PIN. See privilege::adopt_file.
                 privilege::adopt_file(Path::new(VAKT_PANEL_AUTH), id);
             }
         }
@@ -369,16 +362,11 @@ fn run_on_console(
         command.current_dir(&id.home);
     }
 
-    // Runs in the forked child between fork and exec, so the program on the
-    // other side of exec can never have been root.
+    // Between fork and exec, so the program on the other side can never have
+    // been root. The mask is cleared unconditionally: inherited, it leaves the
+    // panel and the recovery shell with SIGINT blocked, so ctrl-c does nothing.
     //
-    // The mask is cleared first and unconditionally. PID 1 blocks the shutdown
-    // signals to read them off a signalfd, a signal mask survives execve, and
-    // an inherited one leaves the panel and the recovery shell running with
-    // SIGINT blocked - which is a shell where ctrl-c does nothing.
-    //
-    // SAFETY: both calls are async-signal-safe and neither allocates, which is
-    // the whole constraint on this side of the fork.
+    // SAFETY: both calls are async-signal-safe and neither allocates.
     unsafe {
         command.pre_exec(move || {
             nix::sys::signal::SigSet::empty()

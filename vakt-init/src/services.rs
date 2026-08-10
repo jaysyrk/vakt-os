@@ -327,14 +327,11 @@ impl Managed {
         cmd.stdin(Stdio::null());
 
         // A signal mask survives execve, and PID 1 blocks the shutdown signals
-        // so it can take them on a signalfd instead. Without clearing it here
-        // every daemon inherits a blocked SIGTERM: `stop_all` asks politely,
-        // nothing hears it, and shutdown waits out the whole grace period
-        // before killing the process outright - on every single shutdown.
+        // for its signalfd. Left inherited, every daemon has SIGTERM blocked
+        // and is killed after the grace period instead of stopping on request.
         //
-        // SAFETY: runs in the forked child between fork and exec, where only
-        // async-signal-safe calls are allowed. sigprocmask qualifies, and
-        // nothing here allocates.
+        // SAFETY: between fork and exec, where only async-signal-safe calls are
+        // allowed. sigprocmask qualifies and nothing here allocates.
         unsafe {
             cmd.pre_exec(|| {
                 nix::sys::signal::SigSet::empty()
@@ -720,14 +717,8 @@ mod tests {
         description: "reports readiness",
     }];
 
-    /// Readiness must reach the status file even when no service ever dies.
-    ///
-    /// `reap` is the only thing that used to trigger a rewrite, and it only
-    /// reports a change when a child exits - so on a healthy appliance the
-    /// file kept saying every service was `waiting` forever, hours after they
-    /// had all reported. Both the panel's Services page and the runbook tell
-    /// an operator to read that file, so it described a broken system while
-    /// the real one was fine.
+    /// `reap` only reports a change when a child exits, so without a second
+    /// trigger the status file said `waiting` forever on a healthy appliance.
     #[test]
     fn readiness_republishes_the_status_file_without_anything_exiting() {
         let dir = scratch("readiness-republish");
@@ -769,16 +760,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A daemon must not inherit PID 1's blocked shutdown signals.
-    ///
-    /// A signal mask survives execve. PID 1 blocks SIGTERM (among others) so it
-    /// can read them off a signalfd, and without clearing the mask in the child
-    /// every service runs with SIGTERM blocked: stop_all's polite request is
-    /// ignored, shutdown waits out the whole grace period, and every daemon is
-    /// killed outright on every single shutdown.
-    ///
-    /// Read back out of /proc rather than assumed, because the property being
-    /// tested is precisely what the kernel did across a fork and an exec.
+    /// A daemon inheriting PID 1's blocked SIGTERM ignores `stop_all` and is
+    /// killed after the grace period instead. Read back out of /proc, since
+    /// what is being tested is what the kernel did across fork and exec.
     #[test]
     fn a_spawned_service_does_not_inherit_a_blocked_sigterm() {
         use nix::sys::signal::{SigSet, Signal};

@@ -1,15 +1,9 @@
 //! Finding a wired interface with a cable in it.
 //!
-//! An appliance with an ethernet cable and no configuration should reach the
-//! network. The panel's only network page is Wi-Fi Setup and it refuses an
-//! empty SSID, so without this a wired-only machine has no supported way to
-//! get online at all - the operator would have to know to hand-write
-//! `vakt-net.conf` from a root shell, which nothing tells them to do.
-//!
-//! Gated on an actual carrier rather than assuming `eth0` exists: a machine
-//! with no ethernet at all should stay `unconfigured`, which is both what the
-//! runbook says that state means and quieter than retrying DHCP forever on an
-//! interface that is never coming up.
+//! The panel can only configure Wi-Fi, so without this a wired-only machine
+//! has no supported route online. Gated on a carrier rather than assuming
+//! `eth0`, so a machine with no ethernet stays `unconfigured` instead of
+//! retrying DHCP on a port that is never coming up.
 
 use std::path::Path;
 use std::process::Command;
@@ -17,15 +11,11 @@ use std::time::Duration;
 
 const SYS_NET: &str = "/sys/class/net";
 
-/// How long to let a link settle after bringing it up. `carrier` reads 0 for
-/// a moment while the PHY autonegotiates, so checking immediately would find
-/// nothing on a cable that is plainly connected.
+/// `carrier` reads 0 while the PHY autonegotiates, so give it a moment.
 const CARRIER_SETTLE: Duration = Duration::from_secs(2);
 
-/// Interfaces that could carry a wired link, in a stable order.
-///
-/// Split from the sysfs root so it can be tested against a fake tree rather
-/// than whatever the build machine happens to have plugged in.
+/// Interfaces that could carry a wired link, in a stable order. Takes the
+/// sysfs root so it can be tested against a fake tree.
 pub fn wired_candidates_in(root: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return Vec::new();
@@ -35,9 +25,7 @@ pub fn wired_candidates_in(root: &Path) -> Vec<String> {
         .filter_map(|e| e.ok())
         .filter(|entry| {
             let path = entry.path();
-            // Wireless interfaces carry their own configuration requirements;
-            // they are the panel's business, not this fallback's. The kernel
-            // marks them with either of these, depending on the driver's age.
+            // Wireless needs credentials; that is the panel's business.
             !path.join("wireless").exists() && !path.join("phy80211").exists()
         })
         .filter_map(|entry| entry.file_name().into_string().ok())
@@ -48,11 +36,8 @@ pub fn wired_candidates_in(root: &Path) -> Vec<String> {
     names
 }
 
-/// Whether `iface` reports a cable.
-///
-/// Reading `carrier` on a down interface fails outright, which is why callers
-/// bring the link up first - an unreadable carrier is reported as no cable
-/// rather than guessed at.
+/// Whether `iface` reports a cable. Unreadable counts as none - `carrier`
+/// cannot be read at all while the link is down, so callers bring it up first.
 pub fn has_carrier_in(root: &Path, iface: &str) -> bool {
     std::fs::read_to_string(root.join(iface).join("carrier"))
         .map(|s| s.trim() == "1")
@@ -121,9 +106,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// A cable is the whole point: an interface that exists but has nothing
-    /// plugged in must not be treated as a network, or a Wi-Fi-only machine
-    /// spends forever retrying DHCP on a dead port.
     #[test]
     fn a_carrier_is_required_and_an_unreadable_one_counts_as_none() {
         let root = fake_sysfs("carrier");

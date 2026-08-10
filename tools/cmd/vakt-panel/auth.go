@@ -46,22 +46,15 @@ const (
 	pinUnusable
 )
 
-// storedPIN reports whether the auth file holds something a PIN could
-// actually be verified against.
-//
-// The distinction matters because verifyPINAt fails safe for every candidate
-// when the stored value is malformed - the correct PIN included. Treating
-// "exists" as "has a PIN", which is what this used to do, therefore turns a
-// truncated or empty file into a lock screen that nothing will ever open.
+// storedPIN reports whether the auth file holds something verifiable.
+// verifyPINAt fails safe for every candidate against a malformed value, the
+// correct PIN included, so "exists" is not the same as "has a PIN".
 func storedPIN(path string) pinState {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// Only a genuinely missing file means no PIN. Anything else - most
-		// realistically a 0600 file owned by root rather than by the panel's
-		// user - means the PIN cannot be checked, which is not the same
-		// thing and must not be reported as a fresh appliance. Saying
-		// "absent" there hides the misconfiguration behind an ordinary setup
-		// screen and rejects the correct PIN with no clue why.
+		// Only a missing file means no PIN. Anything else - typically a 0600
+		// file owned by root rather than the panel's user - means the PIN
+		// cannot be checked, which is not the same thing.
 		if os.IsNotExist(err) {
 			return pinAbsent
 		}
@@ -85,17 +78,10 @@ func storedPIN(path string) pinState {
 
 // hasPINAt reports whether a usable PIN is configured.
 //
-// An unusable file counts as no PIN rather than as a locked console. That is
-// deliberate: this gate defends against someone at the console who does not
-// know the PIN, and such a person cannot write this file - it is 0600 and
-// owned by the panel's own user (vakt-init adopts it at boot, which is what
-// keeps that true across a change of owner), so damaging it already requires
-// running code
-// as that user, which means the panel has been bypassed by other means. The
-// project also documents `vakt.rootshell` as the sanctioned way past a
-// forgotten PIN. Against that, a console no one can ever open again is the
-// worse outcome, so a damaged file falls back to first-boot setup - loudly,
-// see setupScreen.
+// An unusable file counts as no PIN rather than a locked console: damaging it
+// requires already running as the panel's user, and `vakt.rootshell` is the
+// documented way past a forgotten PIN anyway. A console nobody can ever open
+// again is the worse outcome. setupScreen says so in red.
 func hasPINAt(path string) bool {
 	return storedPIN(path) == pinUsable
 }
@@ -114,10 +100,8 @@ func setPINAt(path, pin string) error {
 	}
 
 	body := hex.EncodeToString(salt) + ":" + hashPIN(pin, salt) + "\n"
-	// Written under a temp name and renamed into place, so a write
-	// interrupted by power loss cannot leave a half-written file at path.
-	// storedPIN would classify one as unusable and send the operator to the
-	// setup screen, which is survivable but costs them the PIN they had.
+	// Temp-then-rename: a write cut short by power loss would otherwise leave
+	// a half-written file, which storedPIN reads as a damaged PIN.
 	tmp := path + ".tmp"
 	// Root-only: this file exists to deny the console to whoever does not
 	// know the PIN, so it must not be readable by the account it is

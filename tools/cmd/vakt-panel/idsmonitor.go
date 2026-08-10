@@ -10,18 +10,11 @@ import (
 	"github.com/rivo/tview"
 )
 
-// How often the live view redraws. vakt-ids scans on its own schedule, so this
-// only decides how quickly a finding appears once written - fast enough to feel
-// live, slow enough that the panel is not re-reading a file continuously.
 const idsRefresh = time.Second
 
-// The kinds vakt-ids reports, in the order they are worth reading: something
-// appearing or changing under /persistent is more interesting than the daemon
-// announcing its own baseline.
+// Most interesting first; INFO is the daemon talking about itself.
 var idsKinds = []string{"MODIFIED", "ADDED", "DELETED", "PERMISSIONS", "INFO"}
 
-// tview colour tags per kind. Deletions and modifications are the ones an
-// operator is looking for; INFO is the daemon talking about itself.
 var idsKindColour = map[string]string{
 	"MODIFIED":    "red",
 	"ADDED":       "yellow",
@@ -37,12 +30,8 @@ type idsAlert struct {
 	Detail  string
 }
 
-// parseAlertLine reads one line of the alert file: RFC3339 time, kind, detail,
-// tab separated.
-//
-// A line it cannot parse is kept rather than dropped, with whatever text it
-// has, because the file is the durable record of findings and silently hiding
-// part of it is the one thing this view must not do.
+// parseAlertLine reads one tab-separated line: RFC3339 time, kind, detail.
+// An unparseable line is kept with whatever text it has rather than dropped.
 func parseAlertLine(line string) (idsAlert, bool) {
 	line = strings.TrimRight(line, "\r")
 	if strings.TrimSpace(line) == "" {
@@ -72,8 +61,6 @@ func parseAlerts(body string) []idsAlert {
 	return alerts
 }
 
-// countByKind totals each kind. Kinds outside the known set are counted under
-// their own name so an unexpected one is visible rather than swallowed.
 func countByKind(alerts []idsAlert) map[string]int {
 	counts := map[string]int{}
 	for _, a := range alerts {
@@ -82,11 +69,8 @@ func countByKind(alerts []idsAlert) map[string]int {
 	return counts
 }
 
-// activityBuckets returns how many findings fell into each of the last
-// `buckets` intervals of `width`, oldest first - the sparkline's data.
-//
-// Findings with no parsable timestamp are left out: placing them at "now"
-// would invent activity that did not happen when the graph says it did.
+// activityBuckets counts findings per interval, oldest first. Undated ones are
+// left out rather than placed at "now", which would invent activity.
 func activityBuckets(alerts []idsAlert, now time.Time, width time.Duration, buckets int) []int {
 	out := make([]int, buckets)
 	if buckets == 0 || width <= 0 {
@@ -110,7 +94,7 @@ func activityBuckets(alerts []idsAlert, now time.Time, width time.Duration, buck
 	return out
 }
 
-// sparkline renders counts as block characters, scaled to the busiest bucket.
+// sparkline renders counts as blocks, scaled to the busiest bucket.
 func sparkline(counts []int) string {
 	blocks := []rune("▁▂▃▄▅▆▇█")
 	peak := 0
@@ -126,10 +110,7 @@ func sparkline(counts []int) string {
 			b.WriteRune('▁')
 			continue
 		}
-		// Scaled against the busiest bucket, rounding up so any non-zero
-		// bucket clears the floor: "one thing happened" must never render
-		// identically to "nothing did", which is the only way this graph
-		// could mislead.
+		// Rounded up so one finding never renders identically to none.
 		top := len(blocks) - 1
 		level := (c*top + peak - 1) / peak
 		if level < 1 {
@@ -143,11 +124,8 @@ func sparkline(counts []int) string {
 	return b.String()
 }
 
-// idsMonitorReport renders the whole live view.
-//
-// Split from the widget so every part of it is testable without a terminal:
-// what it says with no findings, with findings, and - the case that matters -
-// when the file cannot be read at all.
+// idsMonitorReport renders the live view. Separate from the widget so it is
+// testable without a terminal.
 func idsMonitorReport(alertPath, statusPath string, now time.Time) string {
 	var b strings.Builder
 
@@ -156,9 +134,8 @@ func idsMonitorReport(alertPath, statusPath string, now time.Time) string {
 	data, err := os.ReadFile(alertPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			// Same rule as the static page: an unreadable alert file is not an
-			// all-clear, and a monitor that quietly shows zeros while findings
-			// are being written is worse than no monitor.
+			// An unreadable file is not an all-clear; showing zeros here would
+			// be worse than showing nothing.
 			fmt.Fprintf(&b, "[red]Cannot read %s: %v[-]\n\n", alertPath, err)
 			b.WriteString("[red]This is not an all-clear.[-] vakt-ids may be recording\n")
 			b.WriteString("findings this page cannot see. Check it from a root shell.\n")
@@ -185,8 +162,7 @@ func idsMonitorReport(alertPath, statusPath string, now time.Time) string {
 		}
 		fmt.Fprintf(&b, "[%s]%s %d[-]   ", colour, kind, counts[kind])
 	}
-	// Anything vakt-ids reports that this panel does not know about still gets
-	// shown, rather than being invisible because the panel is older than it.
+	// Kinds this panel predates are still shown.
 	var unknown []string
 	for kind := range counts {
 		if _, known := idsKindColour[kind]; !known {
@@ -203,7 +179,6 @@ func idsMonitorReport(alertPath, statusPath string, now time.Time) string {
 		sparkline(activityBuckets(alerts, now, time.Minute, 60)))
 
 	b.WriteString("[::b]  Most recent[-]\n\n")
-	// Newest first: the thing that just happened is the thing being looked for.
 	for i := len(alerts) - 1; i >= 0 && i >= len(alerts)-20; i-- {
 		a := alerts[i]
 		colour, known := idsKindColour[a.Kind]
@@ -245,13 +220,9 @@ func idsDaemonLine(statusPath string) string {
 	return "[red]not supervised - vakt-ids is not running[-]"
 }
 
-// idsMonitor builds the live view and starts the goroutine that redraws it.
-//
-// The ticker runs for the life of the panel rather than starting and stopping
-// with the page. It costs one small file read a second, and a monitor that
-// only updates while you are looking at it would show stale counts for the
-// first second every time the page is opened - which is exactly when someone
-// is deciding whether anything is wrong.
+// idsMonitor builds the live view and the goroutine that redraws it. The
+// ticker runs for the life of the panel: one small file read a second, and no
+// stale first frame when the page is opened.
 func idsMonitor(app *tview.Application, alertPath, statusPath string) tview.Primitive {
 	view := tview.NewTextView().SetDynamicColors(true)
 	view.SetBorder(true).SetTitle(" Intrusion Detection — live ")
@@ -264,9 +235,8 @@ func idsMonitor(app *tview.Application, alertPath, statusPath string) tview.Prim
 		})
 	}
 
-	// Drawn once synchronously so the page is never briefly blank, then on a
-	// ticker. The file read happens off the UI goroutine; only the update is
-	// queued back onto it, which is the only thing tview allows from here.
+	// Drawn once so the page is never briefly blank. The read happens off the
+	// UI goroutine; only the update is queued back onto it.
 	view.SetText(idsMonitorReport(alertPath, statusPath, time.Now()))
 	go func() {
 		for range time.Tick(idsRefresh) {

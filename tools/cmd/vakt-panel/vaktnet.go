@@ -38,16 +38,12 @@ func writeNetConfig(ssid, psk, iface string) (string, error) {
 	b.WriteString(fmt.Sprintf("psk=%s\n", psk))
 	b.WriteString(fmt.Sprintf("interface=%s\n", iface))
 
-	// Deliberately a plain in-place write, not the write-temp-then-rename
-	// pattern used elsewhere in this codebase: vakt-net reaches this file
-	// through a Landlock rule, and Landlock rules are keyed on the inode
-	// that existed when the ruleset was created. A rename would put a new
-	// inode at this path, which the daemon's already-locked ruleset does not
-	// cover - Wi-Fi would silently stop working until the next reboot.
-	// vakt-init pre-creates this file owned by the panel's user
-	// (privilege::grant_file) so this truncating write succeeds in place.
+	// In place, not temp-then-rename: Landlock rules are keyed on the inode
+	// that existed when vakt-net locked its ruleset, so a rename would put an
+	// inode there that the daemon cannot reach. vakt-init pre-creates this file
+	// owned by the panel's user so the truncating write succeeds.
 	//
-	// The PSK is in here, so keep it readable by root only.
+	// The PSK is in here, so root only.
 	return path, os.WriteFile(path, []byte(b.String()), 0600)
 }
 
@@ -181,11 +177,9 @@ func idsReport(limit int) string { return idsReportFrom(idsAlerts, limit) }
 func idsReportFrom(path string, limit int) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// Only a missing file means "nothing has been reported". Any other
-		// error means this page does not know, and saying so in green is the
-		// most dangerous thing it could do: an appliance whose alert file the
-		// panel cannot open would show an all-clear while vakt-ids was busy
-		// recording exactly the findings the operator came here to see.
+		// Only a missing file means "nothing reported". Any other error means
+		// this page cannot tell, and saying so in green would be an all-clear
+		// over findings it simply cannot see.
 		if !os.IsNotExist(err) {
 			return "[red]Cannot read " + path + ": " + err.Error() + "[-]\n\n" +
 				"This is not an all-clear. vakt-ids may be recording findings\n" +

@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 #
-# Inspect a packed initramfs without booting it.
-#
-# Everything checked here is something that already shipped broken once and
-# that CI could not see, because CI builds the image and never boots it as
-# anyone but root. Modes inside the archive are the actual on-disk modes after
-# the kernel extracts it, so they can be asserted from outside.
+# Inspect a packed initramfs without booting it. Every check here is something
+# that shipped broken once and that CI cannot see, because CI only ever runs
+# the image as root.
 #
 #   ./build-system/checkimage.sh /tmp/vakt-initramfs.cpio.gz
 
@@ -31,11 +28,8 @@ fail() {
   failures=$((failures + 1))
 }
 
-# The mode string cpio prints for an entry, or empty if the entry is absent.
-#
-# A symlink is listed as `bin/sh -> busybox`, so the name is not simply the
-# last field - most of this image's /bin is busybox symlinks, and reading the
-# last field finds the target instead and reports every applet as missing.
+# The mode cpio prints for an entry, or empty if absent. A symlink is listed as
+# `bin/sh -> busybox`, so the name is not simply the last field.
 mode_of() {
   awk -v want="$1" '
     { line = $0; sub(/ -> .*$/, "", line)
@@ -59,20 +53,15 @@ other_exec() {
   esac
 }
 
-# The whole image root shipped as 0700 once, because the staging directory came
-# from `mktemp -d` and `find .` records that mode for `.`. The kernel's
-# initramfs extractor chmods the real `/` to match, so the unprivileged panel
-# user could not traverse `/` and every exec as that user died with EACCES -
-# which presents as vakt-init looping the panel open and shut.
+# Shipped 0700 once: `mktemp -d`'s mode reached the cpio's `.` entry, the
+# kernel chmods the real `/` to match, and nothing unprivileged could exec.
 root_mode=$(mode_of ".")
 if [ "$root_mode" != "drwxr-xr-x" ]; then
   fail "the image root is $root_mode, not drwxr-xr-x - the panel's user will not be able to traverse /"
 fi
 
-# The kernel execs /init and panics with "No working init found" if it cannot.
-# It reports exactly the same thing when /init is present but unrunnable, so
-# the mode and the dynamic loader are both worth asserting here rather than
-# discovering from a panic screen.
+# The kernel reports "No working init found" both when /init is missing and
+# when it is present but unrunnable, so check the mode too.
 init_mode=$(mode_of "init")
 if [ -z "$init_mode" ]; then
   fail "there is no /init - the kernel will panic with 'No working init found'"
@@ -83,9 +72,8 @@ else
   esac
 fi
 
-# A dynamically linked /init whose interpreter is missing fails execve with
-# ENOENT, which the kernel also reports as no working init - naming a file that
-# is plainly there.
+# A missing interpreter fails execve with ENOENT, which reads as no working
+# init while naming a file that is plainly there.
 if ! grep -q 'ld-linux\|ld-musl' <<<"$LISTING"; then
   fail "no dynamic loader (ld-linux/ld-musl) in the image - a dynamically linked /init cannot start"
 fi
@@ -106,10 +94,7 @@ done
 # Only meaningful for a modular kernel (VAKT_KERNEL=host); a monolithic build
 # ships no /lib/modules at all.
 if exists "lib/modules"; then
-  # busybox's modprobe applet cannot decompress the .ko.zst files a real
-  # kernel package ships, and /bin precedes /usr/bin in vakt-init's PATH, so
-  # leaving the applet in place makes every module fail to load with "invalid
-  # ELF header magic" - and then no storage driver, and then no data disk.
+  # busybox's applet cannot read .ko.zst, and /bin precedes /usr/bin in PATH.
   if exists "bin/modprobe"; then
     fail "/bin/modprobe is present alongside /lib/modules - the busybox applet will shadow real kmod"
   fi

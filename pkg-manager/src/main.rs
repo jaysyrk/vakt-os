@@ -20,12 +20,8 @@ fn install_root() -> PathBuf {
     PathBuf::from(std::env::var("ZRPKG_ROOT").unwrap_or_else(|_| "/opt/vakt".to_string()))
 }
 
-/// What is installed under `root`, as the operator sees it.
-///
-/// Built as a string rather than printed directly so the formatting is
-/// testable: this is the answer to "what is on this appliance", which is the
-/// first question anyone asks after an IDS finding names a file, and it should
-/// not be the one output nobody ever checks.
+/// What is installed under `root`. Returns a string rather than printing, so
+/// the formatting is testable.
 fn installed_report(root: &std::path::Path) -> String {
     use std::fmt::Write;
 
@@ -193,9 +189,7 @@ mod tests {
             .unwrap();
     }
 
-    /// An appliance with nothing installed must say so plainly, and point
-    /// somewhere useful - an empty listing that looks like a failure sends an
-    /// operator hunting for a problem that is not there.
+    /// Nothing installed should read as such, not as a failure.
     #[test]
     fn an_empty_install_root_says_so_rather_than_printing_nothing() {
         let root = scratch("empty");

@@ -31,9 +31,7 @@ func TestParseAlertLine(t *testing.T) {
 	}
 }
 
-// A line this panel cannot parse still gets shown. The alert file is the
-// durable record; a viewer that quietly drops part of it is worse than one
-// that renders it awkwardly.
+// The alert file is the durable record; nothing in it may be silently dropped.
 func TestAnUnparseableLineIsKeptNotDropped(t *testing.T) {
 	got, ok := parseAlertLine("something totally unexpected")
 	if !ok {
@@ -99,8 +97,6 @@ func TestActivityBuckets(t *testing.T) {
 	}
 }
 
-// A finding with no usable timestamp must not be drawn as if it happened now -
-// that would invent activity on the graph at a time nothing occurred.
 func TestUndatedFindingsAreNotPlottedAsRecent(t *testing.T) {
 	now := time.Now()
 	alerts := parseAlerts("not-a-time\tMODIFIED\t/persistent/etc/passwd")
@@ -121,7 +117,6 @@ func TestSparkline(t *testing.T) {
 	if []rune(got)[0] != '▁' {
 		t.Errorf("an empty bucket should be the lowest block, got %q", got)
 	}
-	// The point of the floor: one finding must not render identically to none.
 	if []rune(got)[1] == '▁' {
 		t.Errorf("a bucket with a finding must be visibly above empty, got %q", got)
 	}
@@ -133,8 +128,7 @@ func TestSparkline(t *testing.T) {
 	}
 }
 
-// The whole reason this view exists is to answer "is anything happening". If
-// it cannot read the file it must say so, not draw a calm empty dashboard.
+// A file it cannot read must not render as a calm empty dashboard.
 func TestMonitorDoesNotShowAnAllClearWhenItCannotRead(t *testing.T) {
 	dir := t.TempDir()
 	unreadable := filepath.Join(dir, "alerts")
@@ -188,8 +182,7 @@ func TestMonitorReportsFindings(t *testing.T) {
 	}
 }
 
-// An empty file is what vakt-init now creates at boot, and it means nothing
-// has been found - not that something is wrong.
+// vakt-init creates this file empty at boot; empty means quiet, not broken.
 func TestMonitorTreatsAnEmptyFileAsQuiet(t *testing.T) {
 	dir := t.TempDir()
 	alerts := filepath.Join(dir, "alerts")
@@ -202,8 +195,6 @@ func TestMonitorTreatsAnEmptyFileAsQuiet(t *testing.T) {
 	}
 }
 
-// If vakt-ids is not in the supervisor's status file it is not running, and
-// the page must not imply the machine is being watched.
 func TestMonitorSaysWhenTheDaemonIsNotRunning(t *testing.T) {
 	dir := t.TempDir()
 	status := filepath.Join(dir, "services.status")
