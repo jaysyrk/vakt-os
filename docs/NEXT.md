@@ -53,14 +53,11 @@ Arch machine.
 
 ## Before calling anything v0.1.0
 
-- [ ] **Fix what a released ISO can do.** It trusts the key CI generated, and
-      that key is destroyed with the runner — so a downloaded ISO can never
-      install a package. Publish `index.json` and the `.zrp` files as release
-      assets from the same run that built the ISO, and the keys match:
-      ```sh
-      zrpkg repo https://github.com/jaysyrk/vakt-os/releases/download/v0.1.0
-      ```
-      GitHub Releases becomes the repository. No hosting, still signed.
+- [x] **Fix what a released ISO can do.** Done: the signed repository now
+      ships as release assets from the same run that builds the ISO, so the
+      keys match and `zrpkg repo <release download URL>` works. GitHub
+      Releases is the repository. No hosting, still signed. Untested until
+      something is actually tagged — the release path only runs on a tag.
 - [ ] Wi-Fi passing, above
 - [ ] Panel Lock PIN change confirmed
 - [ ] Release notes: what works, what does not, which machine it was tested on

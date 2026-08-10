@@ -198,10 +198,16 @@ you run — `zrpkg repo <url>` — and the supply chain is yours end to end: you
 sign, you host, your appliance verifies against your key. Nobody, including
 this project, can publish something your appliance will install.
 
-That is also why a prebuilt `vakt-os.iso` from the releases page cannot install
-packages. It trusts whichever key the CI runner generated, and that key was
-destroyed with the runner. The ISO is for looking at; **build your own to use
-one.**
+A prebuilt `vakt-os.iso` therefore trusts the key its own build generated, and
+nothing else. Each release ships the matching signed repository beside it, so
+that ISO can install those packages and no others:
+
+```sh
+zrpkg repo https://github.com/jaysyrk/vakt-os/releases/download/v0.1.0
+```
+
+An ISO from one release cannot install packages from another. That is the same
+property, seen from the other side.
 
 <details>
 <summary><b>Known trade-offs (click)</b></summary>

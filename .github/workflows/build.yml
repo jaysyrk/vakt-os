@@ -368,9 +368,60 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # The signed repository ships beside the ISO, from the same run that
+      # built it. Without this a downloaded ISO can never install anything:
+      # it trusts the key this run generated, and that key does not outlive
+      # the runner, so no repository anywhere is signed by it.
       - name: Publish the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: vakt-os.iso
+          files: |
+            vakt-os.iso
+            tools/repo/index.json
+            tools/repo/*.zrp
+            tools/repo/*.json
           generate_release_notes: true
+          body: |
+            ## Try it
+
+            Boot `vakt-os.iso` in a VM. Give it 8G — the initramfs is the root
+            filesystem, so it all has to fit in memory.
+
+            ```bash
+            qemu-system-x86_64 -m 8G -display none -serial stdio -cdrom vakt-os.iso
+            ```
+
+            Pick **Vakt OS (serial console)** and the whole boot is text in
+            your terminal.
+
+            ## Installing packages from this release
+
+            The packages below are signed by the key baked into *this* ISO, so
+            point the appliance at this release and they verify:
+
+            ```sh
+            zrpkg repo https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+            zrpkg update
+            zrpkg install vakt-audit
+            ```
+
+            That pairing only holds for matching versions. **An ISO from one
+            release cannot install packages from another** — each build mints
+            its own signing key, which is the same property that means nobody,
+            including this project, can publish something your appliance will
+            install.
+
+            ## Building your own
+
+            Recommended for anything beyond a look. `sudo ./build.sh` on an
+            Arch host generates a signing key that never leaves your machine
+            and bakes your public key into your image, so the supply chain is
+            yours end to end. See the README.
+
+            ## Status
+
+            A working prototype, not a product. No independent security review.
+            Hardware coverage is thin — see
+            [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md), and
+            please file a hardware report if you boot it on something new.
