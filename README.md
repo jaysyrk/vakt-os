@@ -30,8 +30,10 @@
 
 **Claude was used solely for .md formats, .sh scripts, and git push automation**
 
-A Linux security appliance built from scratch. Custom init, package manager,
-TUI panel, service supervisor, framebuffer compositor — in Rust, Go, and Zig.
+**A small, immutable Linux security appliance: read-only root, signed-only
+packages, sandboxed services.** Its init, package manager, service supervisor,
+TUI panel and framebuffer compositor are all written from scratch, in Rust, Go
+and Zig.
 
 **No systemd. No glibc userland. No distro underneath.** Just a static busybox
 rootfs, a Rust PID 1, and the tools in this repo.

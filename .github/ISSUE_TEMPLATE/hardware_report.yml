@@ -1,0 +1,107 @@
+name: Hardware report
+description: You booted Vakt OS on a real machine. Tell us what worked and what didn't.
+title: "Hardware: "
+labels: ["hardware"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This is the most useful thing an outsider can contribute right now.**
+
+        Vakt OS has been booted on exactly one machine. Everything we know
+        about real hardware came from that one pass, and it found seven bugs
+        that QEMU could not — a module loader that could not read compressed
+        modules, storage found only after the drivers it needed, an image root
+        that locked out the unprivileged user. Every new machine is a real
+        chance of finding the next one.
+
+        **You do not need to read the code.** Boot it, work through
+        [docs/HARDWARE_VALIDATION.md](../../docs/HARDWARE_VALIDATION.md), and
+        report what happened. A report where most things failed is more useful
+        than one where everything worked.
+
+  - type: input
+    id: machine
+    attributes:
+      label: The machine
+      description: Make and model, or motherboard and CPU for something you built.
+      placeholder: ThinkPad T480 / Ryzen 5600 on a B550 board / some mini-PC off eBay
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kernel-mode
+    attributes:
+      label: Which kernel did you build
+      options:
+        - "host (the default)"
+        - "custom (VAKT_KERNEL=custom)"
+        - "both"
+    validations:
+      required: true
+
+  - type: textarea
+    id: worked
+    attributes:
+      label: What worked
+      description: >
+        Tick off whatever applies: booted at all, reached the panel, found the
+        data disk, wired network, Wi-Fi, package install, poweroff.
+      placeholder: |
+        - Booted from USB, GRUB showed both entries
+        - Reached the PIN screen
+        - /persistent mounted (Samsung 860 EVO, SATA)
+        - Wired DHCP came up on its own
+    validations:
+      required: true
+
+  - type: textarea
+    id: failed
+    attributes:
+      label: What didn't
+      description: >
+        Exact error text beats a description of it. A photo of the screen is
+        fine for anything that fails before you can copy text out.
+    validations:
+      required: false
+
+  - type: textarea
+    id: network-hardware
+    attributes:
+      label: Network and storage chipsets
+      description: >
+        The specific parts matter more than the machine's name, because
+        support lives in kernel config and firmware. From any Linux system on
+        that hardware:
+      value: |
+        <details><summary>lspci -k output</summary>
+
+        ```
+        (paste `lspci -k | grep -A3 -i 'network\|ethernet\|sata\|nvme'` here)
+        ```
+
+        </details>
+    validations:
+      required: false
+
+  - type: textarea
+    id: image-check
+    attributes:
+      label: Image check
+      description: >
+        If the machine would not boot at all, this rules the image itself in
+        or out before anyone starts guessing at your hardware.
+      value: |
+        ```
+        (paste the output of `./build-system/checkimage.sh /tmp/vakt-initramfs.cpio.gz`)
+        ```
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        Results get written up in
+        [docs/HARDWARE_VALIDATION.md](../../docs/HARDWARE_VALIDATION.md) so the
+        next person with similar hardware knows what to expect. Thank you for
+        putting a strange operating system on your computer.
