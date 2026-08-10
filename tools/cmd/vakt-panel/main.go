@@ -203,17 +203,25 @@ func main() {
 
 	pages.AddPage("Services", servicesFlex, true, false)
 
-	idsView := newOutputView()
-	idsView.SetTitle(" Alerts ")
+	// Live rather than a snapshot behind a Refresh button: the question this
+	// page answers is "is anything happening right now", and an operator should
+	// not have to keep pressing a key to find out.
+	idsLive := idsMonitor(app, idsAlerts, servicesStatus)
+
+	// The full record stays one keypress away. The live view shows the most
+	// recent findings; this is everything the alert file still holds.
+	idsHistory := newOutputView()
+	idsHistory.SetTitle(" Full record ")
 	refreshIDS := func() {
-		idsView.Clear()
-		fmt.Fprint(idsView, idsReport(50))
+		idsHistory.Clear()
+		fmt.Fprint(idsHistory, idsReport(200))
 	}
 
-	idsBtn := tview.NewButton("Refresh Alerts").SetSelectedFunc(refreshIDS)
+	idsBtn := tview.NewButton("Show full record").SetSelectedFunc(refreshIDS)
 	idsFlex := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(idsLive, 0, 3, false).
 		AddItem(idsBtn, 3, 1, true).
-		AddItem(idsView, 0, 4, false)
+		AddItem(idsHistory, 0, 2, false)
 
 	pages.AddPage("IDS", idsFlex, true, false)
 
@@ -359,7 +367,7 @@ func main() {
 			refreshServices()
 			app.SetFocus(servicesBtn)
 		}).
-		AddItem("Intrusion Detection", "Review vakt-ids alerts", 'i', func() {
+		AddItem("Intrusion Detection", "Live view of vakt-ids findings", 'i', func() {
 			pages.SwitchToPage("IDS")
 			refreshIDS()
 			app.SetFocus(idsBtn)
