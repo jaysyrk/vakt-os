@@ -88,6 +88,7 @@ repositories and no reason for anyone to find this one.
    network coming up, a signed package installing, a **tampered** package
    being refused. The refusal is the memorable part — it is the claim that
    sounds like marketing until someone watches it happen.
+   `./build-system/demo.sh --serve` stages it so every take is identical.
    *Do not demo A/B updates.* They have never worked once.
 5. **Show HN**, after the video. Technical, first person: the problem, the
    architecture, what works, what does not, what feedback is wanted. Not
