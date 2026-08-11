@@ -94,6 +94,8 @@ wait_for '\[Vakt-OS\]' "a shell prompt" || fail "the image never reached a shell
     echo 'cat /run/services.status'
     echo 'touch /nope 2>&1 | head -1'
     echo 'su vakt -c '"'"'printf "UNPRIV_%s_OK\n" EXEC'"'"' 2>&1 | head -1'
+    # The sandbox line goes to the daemon's log, not the console.
+    echo 'grep -a sandbox /run/vakt-net.log'
     echo 'printf "BOOT%s\n" TEST_DONE'
 } >&3
 
@@ -133,6 +135,10 @@ check  'All services reported ready'      "boot did not time out waiting"
 check  'UNPRIV_EXEC_OK'                   "the unprivileged user can exec"
 refute 'Could not run'                    "nothing failed to launch"
 refute 'crashed .* times'                 "no service crash-looped"
+check  'full Landlock enforcement'        "vakt-net's sandbox was really enforced"
+# A path granted in the ruleset that still will not open means the rule never
+# applied - the shape of the rfkill bug, which cost three reboots to find.
+refute 'present but still denied'         "every granted path is reachable"
 
 if [ "$problems" -ne 0 ]; then
     fail "$problems check(s) failed"
