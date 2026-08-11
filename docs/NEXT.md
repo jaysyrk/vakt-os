@@ -54,7 +54,7 @@ Full checklist in [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md).
 | `zrpkg` install/verify/remove | ✅ host — untested from a booted appliance |
 | Wi-Fi | ❌ blocking, above |
 | Secure Boot | ❌ never attempted |
-| Panel Lock PIN change | ❌ writing that file as the panel's user has never succeeded anywhere |
+| Panel Lock PIN change | ✅ QEMU, full round trip — real hardware still untested |
 | Framebuffer compositor | ❌ never run on a real display |
 | Shutdown / poweroff | ⚠️ `poweroff` from a shell works on real hardware; the panel's `SHUTDOWN=` path is untested |
 | A/B image updates | ❌ never survived one reboot |
@@ -112,7 +112,11 @@ not appear on the console.
       Releases is the repository. No hosting, still signed. Untested until
       something is actually tagged — the release path only runs on a tag.
 - [ ] Wi-Fi passing, above
-- [ ] Panel Lock PIN change confirmed
+- [x] **Panel Lock PIN change confirmed.** Driven through the real TUI over a
+      serial console under QEMU: setup screen accepts a PIN, it lands on the
+      persistent disk owned by the panel's user, a reboot shows the lock
+      screen, the right PIN unlocks and a wrong one does not. This found the
+      durability bug fixed alongside it. Never yet done on real hardware.
 - [ ] Release notes: what works, what does not, which machine it was tested on
 - [ ] Screenshots of the panel and a real boot
 - [ ] Tag, and let CI publish the ISO

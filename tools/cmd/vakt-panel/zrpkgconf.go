@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"vakt-os/tools/internal/durable"
 )
 
 const (
@@ -97,5 +98,5 @@ func writeRepoURL(raw string) (string, string, error) {
 		"# trust.\n" +
 		"repo_url=" + url + "\n"
 
-	return url, path, os.WriteFile(path, []byte(body), 0644)
+	return url, path, durable.WriteFile(path, []byte(body), 0644)
 }

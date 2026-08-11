@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"vakt-os/tools/internal/durable"
 )
 
 const (
@@ -96,16 +97,11 @@ func setPINAt(path, pin string) error {
 	}
 
 	body := hex.EncodeToString(salt) + ":" + hashPIN(pin, salt) + "\n"
-	// Temp-then-rename: a write cut short by power loss would otherwise leave
-	// a half-written file, which storedPIN reads as a damaged PIN.
-	tmp := path + ".tmp"
-	// Root-only: this file exists to deny the console to whoever does not
-	// know the PIN, so it must not be readable by the account it is
-	// protecting the panel from.
-	if err := os.WriteFile(tmp, []byte(body), 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	// Durable, not just atomic: an unsynced rename can leave a zero-length
+	// file after a power cut, which storedPIN reads as unusable and hasPINAt
+	// reports as no PIN - an unlocked console. 0600 because this file exists
+	// to deny the console to whoever does not know the PIN.
+	return durable.WriteFile(path, []byte(body), 0600)
 }
 
 // verifyPINAt checks a candidate PIN against the stored hash in constant

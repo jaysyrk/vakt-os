@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"vakt-os/tools/internal/durable"
 )
 
 const (
@@ -297,11 +298,9 @@ func saveBaseline(path string, b *baseline) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	// Durable: a baseline lost to a power cut is an IDS that cannot tell
+	// tampering from its own amnesia.
+	return durable.WriteFile(path, data, 0600)
 }
 
 // alert records a finding to stdout and to the panel-readable alert file.

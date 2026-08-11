@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"vakt-os/tools/internal/durable"
 )
 
 const (
@@ -44,7 +45,7 @@ func writeNetConfig(ssid, psk, iface string) (string, error) {
 	// owned by the panel's user so the truncating write succeeds.
 	//
 	// The PSK is in here, so root only.
-	return path, os.WriteFile(path, []byte(b.String()), 0600)
+	return path, durable.WriteInPlace(path, []byte(b.String()), 0600)
 }
 
 // readNetConfig loads the saved SSID and interface. The PSK is deliberately
