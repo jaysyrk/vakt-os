@@ -8,37 +8,40 @@ being done yet.
 
 ## Blocking everything else
 
-**Wi-Fi on real hardware.** It is the only thing currently known to be broken.
-`wpa_passphrase` needed a terminal a daemon does not have, so `vakt-net` now
-writes the supplicant configuration itself. That fix has never run on a radio.
+**Wi-Fi on one real machine.** The code is no longer suspect; the appliance
+it was failing on was running a build that predated the fix.
 
-What the appliance has been observed to do: `/dev/rfkill` exists,
-`/sys/class/ieee80211/` lists `phy0`, and `wlan0`'s `operstate` stays `down`.
-So the driver and its firmware are fine and the radio is registered — the
-failure is at association, with `wpa_supplicant` reporting it cannot open the
-rfkill control device on every retry.
+Verified against a virtual radio — `build-system/wifitest.sh`, which uses
+`mac80211_hwsim` to give the guest two 802.11 radios and turns one of them
+into a WPA2 access point:
 
-Ruled out along the way, so nobody re-treads them:
+```
+[vakt-net] Generating supplicant config for SSID 'VaktTest'.
+[vakt-net] Associated with 'VaktTest'.
+udhcpc: lease of 10.9.0.100 obtained from 10.9.0.1
+[vakt-net] Connected. Address 10.9.0.100 on wlan0.
+```
 
-- *No chipset driver.* `phy0` is registered, and `host` is the default kernel.
-- *The node appearing after the ruleset is sealed.* `load_modules()` is
-  synchronous and finishes several steps before the supervisor spawns anything.
-- *File permissions.* `/dev/rfkill` is `0600 root:root`, and `Service` carries
-  no user field — the supervisor spawns daemons with PID 1's identity, so
-  `vakt-net` and everything it runs are root.
+That covers the supplicant configuration `vakt-net` now writes itself (the
+`wpa_passphrase` replacement, which had never associated with anything), the
+carrier wait before DHCP, and the config-change watcher switching a live
+daemon from wired to wireless — all under full Landlock enforcement, on a
+kernel where `rfkill` is registered. No `Cannot open RFKILL control device`.
 
-That leaves the ruleset itself, which is why the first item below is the log
-line naming what the kernel actually enforced.
+What that does **not** cover is any particular chipset. Remaining:
 
-- [ ] `head -5 /run/vakt-net.log` — the sandbox line says whether Landlock is
-      enforced at all. Everything below assumes it is, and that is unverified
-- [ ] Rebuild, boot on the machine, set up `Stkyezone_EXT` from the panel
+- [ ] Rebuild and reflash — the failing appliance predates `50c6fbd`
 - [ ] `cat /run/vakt-net.status` reaches `connected` with an address
 - [ ] Reboot and confirm it reconnects with no prompting
 - [ ] Record the chipset in [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md) —
-      it decides which firmware the image must keep carrying
+      it decides which firmware the image must keep carrying, and it is the one
+      thing no amount of emulation can answer
 
-Until this passes, "networking comes up" cannot be in a demo.
+Ruled out while chasing this, so nobody re-treads them: a missing chipset
+driver (`phy0` was registered), the rfkill node appearing after the ruleset is
+sealed (`load_modules()` is synchronous and finishes before services start),
+and file permissions (`Service` carries no user field, so daemons run as
+PID 1 does).
 
 ---
 
@@ -52,11 +55,11 @@ Full checklist in [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md).
 | IDS detection and alerting | ✅ host + booted appliance |
 | Wired DHCP | ✅ QEMU — real NIC untested |
 | `zrpkg` install/verify/remove | ✅ host — untested from a booted appliance |
-| Wi-Fi | ❌ blocking, above |
+| Wi-Fi | ✅ WPA2 association + DHCP against a virtual radio — no real chipset yet |
 | Secure Boot | ❌ never attempted |
 | Panel Lock PIN change | ✅ QEMU, full round trip — real hardware still untested |
 | Framebuffer compositor | ❌ never run on a real display |
-| Shutdown / poweroff | ⚠️ `poweroff` from a shell works on real hardware; the panel's `SHUTDOWN=` path is untested |
+| Shutdown / poweroff | ✅ shell `poweroff` on real hardware; the panel's `SHUTDOWN=` path verified under QEMU |
 | A/B image updates | ❌ never survived one reboot |
 
 CI now boots the image it builds — `build-system/boottest.sh` runs it headless
