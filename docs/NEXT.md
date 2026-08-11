@@ -18,6 +18,18 @@ So the driver and its firmware are fine and the radio is registered — the
 failure is at association, with `wpa_supplicant` reporting it cannot open the
 rfkill control device on every retry.
 
+Ruled out along the way, so nobody re-treads them:
+
+- *No chipset driver.* `phy0` is registered, and `host` is the default kernel.
+- *The node appearing after the ruleset is sealed.* `load_modules()` is
+  synchronous and finishes several steps before the supervisor spawns anything.
+- *File permissions.* `/dev/rfkill` is `0600 root:root`, and `Service` carries
+  no user field — the supervisor spawns daemons with PID 1's identity, so
+  `vakt-net` and everything it runs are root.
+
+That leaves the ruleset itself, which is why the first item below is the log
+line naming what the kernel actually enforced.
+
 - [ ] `head -5 /run/vakt-net.log` — the sandbox line says whether Landlock is
       enforced at all. Everything below assumes it is, and that is unverified
 - [ ] Rebuild, boot on the machine, set up `Stkyezone_EXT` from the panel
@@ -63,6 +75,32 @@ a ruleset built in a container returns `NotEnforced`, so a probe that opens a
 deliberately ungranted device node succeeds there and proves nothing. The
 daemons now log any path they granted and still cannot open, which moves this
 from untestable to at least observable on the appliance.
+
+---
+
+## Known defect: init talks over the console session
+
+The supervisor runs on a background thread and prints with `println!`, which is
+PID 1's stdout — the same `/dev/console` the panel and the shell run on. A
+service reporting ready while someone is typing splices `[Vakt-Init] Service
+'vakt-net' is ready.` into their command line. Observed on real hardware: a
+`cat /run/vakt-net.status` turned into a "can't open" error for a path that
+was never typed.
+
+Cosmetic-looking, but it makes the console untrustworthy exactly when someone
+is debugging, and every service already logs its own output to a file — this
+is only the supervisor's own chatter.
+
+The shape of the fix: a flag saying an interactive session owns the console,
+set for the lifetime of each `run_on_console` child. While it is set, the
+supervisor's messages append to a log instead of the console; boot output,
+which happens before any session exists, is unchanged. Nothing is lost either
+way, which is the property that makes it safe.
+
+Not implemented yet on purpose: it changes PID 1's output, and it cannot be
+verified without booting the image. `build-system/boottest.sh` is the right
+place to assert it — a marker printed by a service after a shell prompt must
+not appear on the console.
 
 ---
 
