@@ -11,8 +11,45 @@ use std::time::Duration;
 
 const SYS_NET: &str = "/sys/class/net";
 
+/// Where the kernel lists 802.11 radios. Empty means no driver claimed the
+/// card, whatever the configuration calls the interface.
+const SYS_RADIO: &str = "/sys/class/ieee80211";
+
 /// `carrier` reads 0 while the PHY autonegotiates, so give it a moment.
 const CARRIER_SETTLE: Duration = Duration::from_secs(2);
+
+/// Whether the kernel knows this interface at all.
+pub fn exists(iface: &str) -> bool {
+    Path::new(SYS_NET).join(iface).exists()
+}
+
+pub fn radios_in(root: &Path) -> usize {
+    std::fs::read_dir(root)
+        .map(|entries| entries.filter_map(|e| e.ok()).count())
+        .unwrap_or(0)
+}
+
+pub fn has_radio() -> bool {
+    radios_in(Path::new(SYS_RADIO)) > 0
+}
+
+/// Waits for a carrier, which for Wi-Fi means association and the WPA
+/// handshake have completed. Returns false if it never arrives.
+pub fn wait_for_carrier(iface: &str, timeout: Duration) -> bool {
+    let root = Path::new(SYS_NET);
+    let step = Duration::from_millis(500);
+    let mut waited = Duration::ZERO;
+    loop {
+        if has_carrier_in(root, iface) {
+            return true;
+        }
+        if waited >= timeout {
+            return false;
+        }
+        std::thread::sleep(step);
+        waited += step;
+    }
+}
 
 /// Interfaces that could carry a wired link, in a stable order. Takes the
 /// sysfs root so it can be tested against a fake tree.
@@ -118,6 +155,20 @@ mod tests {
         assert!(!has_carrier_in(&root, "eth1"));
         assert!(!has_carrier_in(&root, "eth2"));
         assert!(!has_carrier_in(&root, "does-not-exist"));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A kernel with the 802.11 stack but no chipset driver registers no
+    /// radio, which is the difference between "wrong passphrase" and "this
+    /// build cannot talk to your card at all".
+    #[test]
+    fn radios_are_counted_and_an_absent_tree_means_none() {
+        let root = fake_sysfs("radios");
+        assert_eq!(radios_in(&root), 0);
+        std::fs::create_dir_all(root.join("phy0")).unwrap();
+        assert_eq!(radios_in(&root), 1);
+        assert_eq!(radios_in(Path::new("/definitely/not/here")), 0);
 
         let _ = std::fs::remove_dir_all(&root);
     }

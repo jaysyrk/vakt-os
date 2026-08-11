@@ -13,8 +13,8 @@ use std::time::{Duration, SystemTime};
 const WPA_CONF: &str = "/run/wpa_supplicant.conf";
 const WPA_PID: &str = "/run/wpa_supplicant.pid";
 
-/// How long to wait for the supplicant to associate before asking for a lease.
-const ASSOC_WAIT: Duration = Duration::from_secs(4);
+/// How long association and the WPA handshake get before it counts as failed.
+const ASSOC_TIMEOUT: Duration = Duration::from_secs(20);
 /// Poll interval for noticing that the TUI rewrote the config.
 const POLL: Duration = Duration::from_secs(1);
 /// Retry backoff bounds after a failed connection attempt.
@@ -170,9 +170,24 @@ fn announce(announced: &mut bool, detail: &str) {
 
 /// Brings the interface up, associates if wireless, then requests a lease.
 fn connect(cfg: &NetConfig) -> Result<String, String> {
+    if !link::exists(&cfg.interface) {
+        return Err(format!(
+            "no interface named {}; the kernel has no driver for this card",
+            cfg.interface
+        ));
+    }
+
     run("ip", &["link", "set", &cfg.interface, "up"]);
 
     if cfg.is_wireless() {
+        if !link::has_radio() {
+            return Err(format!(
+                "{} exists but no 802.11 radio is registered; the driver loaded \
+                 without its firmware, or the radio is hard-blocked",
+                cfg.interface
+            ));
+        }
+
         let ssid = cfg.ssid.as_deref().unwrap_or_default();
         let psk = cfg.psk.as_deref().unwrap_or_default();
 
@@ -193,8 +208,18 @@ fn connect(cfg: &NetConfig) -> Result<String, String> {
             return Err("wpa_supplicant failed to start".to_string());
         }
 
-        // Association is asynchronous; give the radio a moment before DHCP.
-        std::thread::sleep(ASSOC_WAIT);
+        // Asking for a lease before the radio has associated wastes the whole
+        // DHCP timeout and reports "no address", which is true of every
+        // failure and diagnoses none of them.
+        if !link::wait_for_carrier(&cfg.interface, ASSOC_TIMEOUT) {
+            return Err(format!(
+                "did not associate with '{}' within {}s; wrong passphrase, out \
+                 of range, or the radio is blocked",
+                ssid,
+                ASSOC_TIMEOUT.as_secs()
+            ));
+        }
+        log!("Associated with '{}'.", ssid);
     }
 
     request_lease(&cfg.interface)?;
