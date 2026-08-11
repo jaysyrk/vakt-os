@@ -1,14 +1,9 @@
 //! Landlock confinement for the compositor.
 //!
-//! The compositor's entire job is to map `/dev/fb0` and write pixels into it,
-//! so the ruleset it needs is the smallest one this system has: that single
-//! device node and nothing else. No configuration, no libraries, no `/proc`.
-//!
-//! It can be this strict because Landlock is applied after `exec`. By the time
-//! this runs the dynamic loader has already mapped everything the binary needs,
-//! and nothing left to do involves opening a path. Confining first and opening
-//! the framebuffer afterwards is what proves the rule is doing something -
-//! if the ruleset were wrong, the very next call would fail.
+//! The compositor maps `/dev/fb0` and writes pixels into it, so its ruleset is
+//! that one device node and nothing else. It can be this strict because
+//! Landlock is applied after `exec`: the loader has already mapped everything,
+//! and nothing left to do opens a path.
 
 use landlock::{
     ABI, Access, AccessFs, CompatLevel, Compatible, RulesetAttr, RulesetCreatedAttr, RulesetStatus,

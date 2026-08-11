@@ -1,13 +1,12 @@
 //! Boot-time kernel hardening via `/proc/sys`.
 //!
-//! `lsm=landlock,yama` on the kernel command line loads Yama, but loading the
-//! LSM does not turn on `ptrace_scope` - that is a separate sysctl, and the
-//! default leaves cross-process ptrace open. The same is true of the network
-//! sysctls below: the kernel ships sensible defaults for a general-purpose
-//! machine, not for an appliance with a fixed, known network role. Nothing
-//! here is a symbol the kernel build has to carry specially; every path is
-//! written only if it already exists, so a kernel built without a given knob
-//! degrades to leaving it alone rather than failing boot.
+//! `lsm=landlock,yama` loads Yama but does not turn on `ptrace_scope` - that is
+//! a separate sysctl whose default leaves cross-process ptrace open. Likewise
+//! the network knobs: the kernel's defaults suit a general-purpose machine, not
+//! an appliance with a fixed role.
+//!
+//! Every path is written only if it already exists, so a kernel built without a
+//! given knob leaves it alone rather than failing boot.
 
 use std::path::Path;
 

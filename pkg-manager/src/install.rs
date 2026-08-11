@@ -58,17 +58,10 @@ fn trusted_public_key() -> Result<String> {
 
 /// A staging directory only this process can write into.
 ///
-/// Downloads used to land on a fixed `/tmp/<name>.zrp`. `/tmp` is a
-/// world-writable tmpfs on the appliance (mode 1777), so anyone able to run
-/// code there could pre-plant that path as a symlink and have the download
-/// written through it - the same local privilege-escalation primitive
-/// `build.sh` already avoids with `mktemp -d`, and worse when `zrpkg` is run
-/// from the root recovery shell.
-///
-/// The directory is created 0700 at creation time, not chmod'd afterwards,
-/// and `DirBuilder::create` is non-recursive so it fails outright if
-/// anything already occupies the path. Losing the race therefore means
-/// failing closed rather than writing somewhere unintended.
+/// A fixed `/tmp/<name>.zrp` could be pre-planted as a symlink on a 1777 tmpfs
+/// and have the download written through it. Created 0700 at creation time
+/// rather than chmod'd after, and non-recursively, so losing the race fails
+/// closed instead of writing somewhere unintended.
 fn private_staging_dir() -> Result<PathBuf> {
     use std::os::unix::fs::DirBuilderExt;
 

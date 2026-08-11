@@ -1,25 +1,13 @@
 //! Where the package repository lives.
 //!
-//! The default points at `10.0.2.2`, which is the host under QEMU user
-//! networking - convenient for developing on a laptop, useless for an appliance
-//! that has been deployed. A real installation talks to a repository on a
-//! server somewhere, and it has to be possible to say so without rebuilding the
-//! image.
+//! Consulted most specific first: `ZRPKG_REPO_URL`, then
+//! `/persistent/etc/zrpkg.conf` (what the panel writes), then
+//! `/etc/vakt/zrpkg.conf` baked into the image. Falling through gives
+//! `10.0.2.2`, the host under QEMU user networking.
 //!
-//! Three places are consulted, most specific first:
-//!
-//! 1. `ZRPKG_REPO_URL` in the environment, for one-off overrides and scripts.
-//! 2. `/persistent/etc/zrpkg.conf` on the data disk, which is what the panel
-//!    writes and what survives a reboot.
-//! 3. `/etc/vakt/zrpkg.conf` baked into the image, for shipping an appliance
-//!    that already knows where its repository is.
-//!
-//! Falling all the way through gives the QEMU default.
-//!
-//! Note what is *not* on this list: the repository URL is not a trust decision.
-//! Packages are verified against `/etc/vakt/trusted.key` whatever server they
-//! came from, so pointing this at a hostile mirror gets you failed signature
-//! checks, not compromised packages.
+//! This is not a trust decision. Packages are verified against
+//! `/etc/vakt/trusted.key` whatever server they came from, so a hostile mirror
+//! gets you failed signature checks, not compromised packages.
 
 use anyhow::{Result, bail};
 use std::fmt;

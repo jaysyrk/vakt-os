@@ -1,9 +1,8 @@
-//! Finding a wired interface with a cable in it.
+//! Interface state: what exists, what has a radio, and what has a carrier.
 //!
-//! The panel can only configure Wi-Fi, so without this a wired-only machine
-//! has no supported route online. Gated on a carrier rather than assuming
-//! `eth0`, so a machine with no ethernet stays `unconfigured` instead of
-//! retrying DHCP on a port that is never coming up.
+//! The panel can only configure Wi-Fi, so without the wired half a wired-only
+//! machine has no supported route online. Gated on a carrier rather than
+//! assuming `eth0`.
 
 use std::path::Path;
 use std::process::Command;
@@ -11,8 +10,7 @@ use std::time::Duration;
 
 const SYS_NET: &str = "/sys/class/net";
 
-/// Where the kernel lists 802.11 radios. Empty means no driver claimed the
-/// card, whatever the configuration calls the interface.
+/// Empty means no driver claimed the card.
 const SYS_RADIO: &str = "/sys/class/ieee80211";
 
 /// `carrier` reads 0 while the PHY autonegotiates, so give it a moment.
@@ -33,8 +31,7 @@ pub fn has_radio() -> bool {
     radios_in(Path::new(SYS_RADIO)) > 0
 }
 
-/// Waits for a carrier, which for Wi-Fi means association and the WPA
-/// handshake have completed. Returns false if it never arrives.
+/// For Wi-Fi a carrier means association and the WPA handshake completed.
 pub fn wait_for_carrier(iface: &str, timeout: Duration) -> bool {
     let root = Path::new(SYS_NET);
     let step = Duration::from_millis(500);
@@ -159,9 +156,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// A kernel with the 802.11 stack but no chipset driver registers no
-    /// radio, which is the difference between "wrong passphrase" and "this
-    /// build cannot talk to your card at all".
+    /// The 802.11 stack without a chipset driver registers no radio - the
+    /// difference between "wrong passphrase" and "no driver for this card".
     #[test]
     fn radios_are_counted_and_an_absent_tree_means_none() {
         let root = fake_sysfs("radios");

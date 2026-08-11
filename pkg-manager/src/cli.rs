@@ -36,12 +36,9 @@ pub enum Commands {
     /// Build and sign a .zrp archive from a directory.
     Pack {
         source_dir: String,
-        /// The signing key as hex, directly on the command line.
-        ///
-        /// Convenient for a throwaway key in a test, and wrong for a real
-        /// one: /proc/<pid>/cmdline is world-readable, so every argument is
-        /// visible to any other user on the build machine for as long as
-        /// this runs. Prefer --key-file.
+        /// The signing key as hex. Visible to every user on the machine via
+        /// /proc/<pid>/cmdline while this runs - prefer --key-file for a real
+        /// key.
         private_key_hex: Option<String>,
         /// Read the signing key from this file instead of the command line.
         #[arg(long)]

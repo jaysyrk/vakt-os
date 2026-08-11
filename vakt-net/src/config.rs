@@ -100,19 +100,13 @@ pub fn config_stamp() -> Option<SystemTime> {
     std::fs::metadata(path).ok()?.modified().ok()
 }
 
-/// Ensures a file exists at [`PERSISTENT_CONF`], creating an empty one if
-/// not. Must be called before `sandbox::confine()` locks in the Landlock
-/// ruleset: Landlock can only grant a rule for a path that exists at the
-/// moment the ruleset is built, and the ruleset can never be widened
-/// afterward. On a fresh appliance that has never had Wi-Fi configured, this
-/// file genuinely does not exist the first time this daemon starts - without
-/// this, the daemon would be permanently unable to ever read it, even after
-/// the panel creates it later, for the rest of that boot.
+/// Ensures a file exists at [`PERSISTENT_CONF`], creating an empty one if not.
 ///
-/// A missing `/persistent/etc` or a read-only root (RAM-only mode, no data
-/// disk) both fail here silently and correctly leave the file absent -
-/// `sandbox::confine`'s own existence filter already handles that the same
-/// way it always has.
+/// Must run before `sandbox::confine()`: Landlock only grants rules for paths
+/// that exist when the ruleset is built, and it can never be widened after. On
+/// a fresh appliance the file does not exist yet, so without this the daemon
+/// could never read it for the rest of that boot. Failing here leaves the file
+/// absent, which `confine`'s existence filter already handles.
 pub fn ensure_config_placeholder() {
     ensure_placeholder_at(Path::new(PERSISTENT_CONF));
 }

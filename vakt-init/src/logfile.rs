@@ -1,15 +1,11 @@
 //! A size-capped log sink for supervised daemons.
 //!
-//! Service output lands in `/run`, which is a tmpfs - every byte written is a
-//! byte of RAM that never comes back on its own. A daemon stuck in a loop
-//! printing an error is therefore not merely noisy, it is a slow way to kill
-//! the machine. The supervisor pipes each service's output through this writer,
-//! which keeps a bounded window of the log and discards the rest.
+//! Service output lands in `/run`, a tmpfs, so a daemon looping on an error is
+//! a slow way to fill RAM. This keeps a bounded window and discards the rest.
 //!
-//! The window is the *recent* output: when the active file fills up it becomes
-//! `<name>.log.1` and a fresh one is started, so the last thing a daemon said
-//! before it died is always still there. Two generations at half the budget
-//! each means the total never exceeds [`BUDGET`] per service.
+//! The window is the *recent* output: a full file becomes `<name>.log.1` and a
+//! fresh one starts, so a daemon's last words survive. Two generations at half
+//! the budget each keeps the total under [`BUDGET`] per service.
 
 use std::fs::File;
 use std::io::{self, Read, Write};

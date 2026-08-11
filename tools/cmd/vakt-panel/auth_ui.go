@@ -7,17 +7,13 @@ import (
 	"github.com/rivo/tview"
 )
 
-// authGateRoot returns the primitive vakt-panel should show first: a PIN
-// prompt when one is configured, a one-time setup screen when it is not.
-// Either path ends by calling unlock, which swaps the running application's
-// root for the real panel - tview allows changing the root at any time, so
-// there is no second call to app.Run().
+// authGateRoot returns what vakt-panel shows first: a PIN prompt when one is
+// configured, a setup screen when it is not. Either path ends in unlock, which
+// swaps the application's root for the real panel.
 //
-// onUnlock runs before the swap. main.go uses it to arm the global Esc
-// handler, which targets the main menu - a primitive that does not exist
-// anywhere in the lock/setup screen's tree, so firing it early leaves no
-// focused primitive in the visible screen at all and the form stops taking
-// keyboard input for the rest of the session.
+// onUnlock runs before the swap. Arming the global Esc handler any earlier
+// targets a primitive absent from the lock screen's tree, which leaves nothing
+// focused and the form deaf to the keyboard for the rest of the session.
 func authGateRoot(app *tview.Application, mainLayout, focusAfter tview.Primitive, onUnlock func()) tview.Primitive {
 	unlock := func() {
 		onUnlock()

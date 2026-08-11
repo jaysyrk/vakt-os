@@ -1,15 +1,12 @@
 //! Working out what has to be installed, and in what order.
 //!
-//! A package declares the names it depends on; those packages declare theirs.
-//! The result is a directed graph, and installing correctly means visiting it
-//! so that nothing is unpacked before the things it needs. That is a
-//! topological sort, and the sort is only defined if the graph is acyclic - so
-//! this also has to detect the case where it is not, and say which packages
-//! form the loop rather than recursing until the stack runs out.
+//! Dependencies form a directed graph, so installing in a safe order is a
+//! topological sort - defined only if the graph is acyclic, which is why a
+//! cycle is reported by naming the packages in the loop rather than recursing
+//! until the stack runs out.
 //!
-//! The sort is deliberately separate from fetching. Everything here operates on
-//! a map of manifests that has already been collected, which keeps the ordering
-//! logic synchronous, pure, and testable without a repository to talk to.
+//! Kept separate from fetching: everything here works on an already-collected
+//! map of manifests, so the ordering logic is pure and testable offline.
 
 use crate::manifest::PackageManifest;
 use anyhow::{Result, bail};

@@ -1,18 +1,14 @@
 //! Taking a package back off the system.
 //!
 //! Removal deletes exactly the paths the install recorded, and nothing else.
-//! Two properties matter more than anything here, because this is the one
-//! command that destroys data:
+//! Two properties matter, this being the one command that destroys data:
 //!
-//! * **Every path is checked before it is touched.** A recorded path is data
-//!   that came out of an archive, and an archive comes off the network. It is
-//!   treated as untrusted: absolute paths and any `..` component are rejected
-//!   rather than resolved, so a crafted package cannot record `../../etc/passwd`
-//!   at install time and have `zrpkg remove` delete it later.
-//! * **Nothing follows a symlink.** Deletion uses `remove_file`, which unlinks
-//!   the link itself, and directories are only ever removed when already empty.
-//!   A package that ships a symlink to `/etc` can therefore delete the link and
-//!   never what it points at.
+//! * **Every path is checked before it is touched.** Recorded paths came out of
+//!   an archive off the network, so absolute paths and `..` are rejected rather
+//!   than resolved - a crafted package cannot record `../../etc/passwd`.
+//! * **Nothing follows a symlink.** `remove_file` unlinks the link itself and
+//!   directories go only when already empty, so a package shipping a symlink to
+//!   `/etc` deletes the link and never what it points at.
 
 use crate::db::{DB_DIR, Database};
 use anyhow::{Result, bail};
@@ -112,18 +108,10 @@ pub fn remove_package(name: &str, root: &Path, force: bool) -> Result<Removal> {
 /// Reduces a path to a plain relative one, rejecting anything that could point
 /// outside the install root.
 ///
-/// The check is lexical on purpose. Canonicalising would resolve symlinks, and
-/// a symlink planted by the package is exactly what this is defending against -
-/// asking the filesystem where a path "really" goes would take the attacker's
-/// answer.
-///
-/// Install and remove both go through this, which is what makes the database
-/// meaningful: nothing can be recorded that removal would later refuse to act
-/// on, and nothing can be acted on that was not recorded.
-///
-/// An empty result means the path named the root of the archive itself - `.`,
-/// which is how tar spells the directory being packed. That is legal but is not
-/// a file, and callers decide what to do with it.
+/// Lexical on purpose: canonicalising would resolve symlinks, and a symlink
+/// planted by the package is what this defends against. Install and remove both
+/// go through it, so nothing can be recorded that removal would refuse to act
+/// on. An empty result means `.`, the archive root - legal, but not a file.
 pub fn safe_relative(recorded: &Path) -> Result<PathBuf> {
     let mut relative = PathBuf::new();
 

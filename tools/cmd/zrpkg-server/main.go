@@ -1,18 +1,12 @@
 // zrpkg-server publishes a signed Vakt OS package repository over HTTP.
 //
-// It started life as a convenience for handing packages to a VM on the same
-// laptop, where http.FileServer over a directory was entirely adequate. Serving
-// the same directory from a rented server is a different problem: the listener
-// is reachable by anyone, directory listings enumerate what you have, and a
-// process with no timeouts is a slow-loris away from being unavailable.
+// The surface is deliberately small: read-only methods, a flat namespace, two
+// file extensions, no directory listings, bounded timeouts, per-IP rate
+// limiting, and optional TLS for when nothing is proxying in front of it.
 //
-// So this serves a deliberately small surface. Read-only methods, a flat
-// namespace, two file extensions, no listings, bounded timeouts, per-IP rate
-// limiting, and optional TLS for when there is no reverse proxy in front of it.
-//
-// Note what it does not do: authentication. Packages are signed and clients
-// verify them against a trust anchor, so the repository is public data. Keep
-// the signing key off this machine and there is nothing here worth stealing.
+// No authentication. Packages are signed and clients verify them against a
+// trust anchor, so the repository is public data - keep the signing key off
+// this machine and there is nothing here worth stealing.
 package main
 
 import (

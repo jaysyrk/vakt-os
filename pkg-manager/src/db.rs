@@ -1,15 +1,12 @@
 //! The record of what is installed.
 //!
-//! Unpacking a tarball is easy; undoing it later is only possible if something
-//! wrote down what came out. Every install therefore leaves a file under
-//! `var/lib/zrpkg/` inside the install root listing each path it created, and
-//! `zrpkg remove` works entirely from that list. Nothing is ever deleted
-//! because it looks like it belongs to a package - only because this database
-//! says the package put it there.
+//! Every install leaves a file under `var/lib/zrpkg/` listing each path it
+//! created, and `zrpkg remove` works entirely from that list. Nothing is
+//! deleted because it looks like it belongs to a package - only because this
+//! database says the package put it there.
 //!
-//! The database lives inside the install root rather than in `/etc` so it
-//! travels with the packages it describes: both are on the persistent disk, and
-//! a wiped disk leaves no stale record of packages that are no longer there.
+//! It lives inside the install root rather than `/etc` so it travels with the
+//! packages it describes, and a wiped disk leaves no stale record.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};

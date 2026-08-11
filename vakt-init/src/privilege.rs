@@ -65,16 +65,13 @@ fn parse_passwd(passwd: &str, name: &str) -> Option<Identity> {
 
 /// Irreversibly becomes `identity`.
 ///
-/// The order is the only order that works: supplementary groups and the group
-/// id must go while the process is still root, because dropping the user id
-/// first would take away the privilege needed to drop the rest. The final
-/// check is what makes "irreversible" a claim rather than a hope - if the
-/// kernel left any path back to uid 0, the caller must not continue.
+/// Supplementary groups and the gid must go while still root; dropping the uid
+/// first would take away the privilege needed for the rest. The final check is
+/// what makes "irreversible" a claim rather than a hope.
 ///
-/// This is called from `pre_exec`, between `fork` and `exec` in a process that
-/// has other threads, so it sticks to async-signal-safe syscalls and allocates
-/// nothing - including on the failure path, which is why the last error is a
-/// raw errno rather than a message.
+/// Called from `pre_exec` in a multi-threaded process, so it sticks to
+/// async-signal-safe syscalls and allocates nothing - hence a raw errno on the
+/// failure path rather than a message.
 pub fn become_user(uid: u32, gid: u32) -> io::Result<()> {
     let uid = Uid::from_raw(uid);
     let gid = Gid::from_raw(gid);
@@ -112,14 +109,11 @@ pub fn grant(path: &Path, identity: &Identity) {
 
 /// Creates `path` if it is missing and hands it to `identity`.
 ///
-/// Unlike [`grant`], this is for a single file the unprivileged panel has to
-/// be able to rewrite in place. It exists so vakt-net's Landlock ruleset can
-/// name the Wi-Fi config path at startup even on an appliance that has never
-/// had Wi-Fi configured: Landlock cannot grant a rule for a path that does
-/// not exist, and a ruleset can never be widened afterward.
-///
-/// The file must be owned by the panel's user, not root, or the panel's
-/// write would fail with EACCES against a root-owned placeholder.
+/// Unlike [`grant`], this is for a single file the unprivileged panel rewrites
+/// in place. It exists so vakt-net's Landlock ruleset can name the Wi-Fi config
+/// path even on an appliance that has never had Wi-Fi configured - Landlock
+/// cannot grant a rule for a path that does not exist. Ownership must go to the
+/// panel's user, or its write fails with EACCES against a root-owned file.
 pub fn grant_file(path: &Path, identity: &Identity) {
     if !path.exists() {
         if let Some(parent) = path.parent() {
@@ -222,18 +216,11 @@ pub fn grant_console(identity: &Identity) {
 mod tests {
     use super::*;
 
-    /// grant_file exists so the panel can rewrite the Wi-Fi config in place.
-    /// A root-owned placeholder would make the panel's write fail with
-    /// EACCES, so the file it creates must be 0600 and must be handed to the
-    /// panel's user. The chown itself needs privileges this test suite does
-    /// not have, so what is pinned here is the part that always holds:
-    /// creation, mode, and that an existing file is never clobbered.
-    /// adopt_file must never create the file it is handed.
-    ///
-    /// grant_file creates a missing file on purpose, for a config the panel
-    /// rewrites in place. Doing that to the panel's stored PIN would leave an
-    /// empty file, which the panel reads as a PIN it cannot parse - so a brand
-    /// new appliance would announce that its old PIN is gone.
+    /// The chown needs privileges this suite does not have, so what is pinned
+    /// here is creation, mode, and that an existing file is never clobbered.
+    /// adopt_file must never create the file it is handed: an empty PIN file
+    /// reads as one the panel cannot parse, so a new appliance would announce
+    /// that its old PIN is gone.
     #[test]
     fn adopt_file_leaves_a_missing_file_missing() {
         let dir = std::env::temp_dir().join(format!("vakt-init-adopt-{}", std::process::id()));

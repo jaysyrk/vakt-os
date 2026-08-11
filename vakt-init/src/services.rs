@@ -1,15 +1,12 @@
 //! A minimal service supervisor for vakt-init.
 //!
-//! This is deliberately small: it spawns background daemons, records their
-//! PIDs, captures their output into a size-capped log, reaps them when they
-//! die, restarts the ones that are supposed to stay up, and stops all of them
-//! in order when the system goes down.
+//! Spawns background daemons, records their PIDs, captures output into a
+//! size-capped log, reaps them, restarts the ones meant to stay up, and stops
+//! them in order at shutdown.
 //!
-//! Reaping is done with `Child::try_wait()` on each tracked PID rather than a
-//! blanket `waitpid(-1)`. As PID 1 we could reap everything, but the main
-//! thread runs `vakt-panel` via `Child::wait()`, which needs to collect that
-//! child's exit code itself - a wildcard reaper in this thread would race it
-//! and steal the result.
+//! Reaping uses `Child::try_wait()` per tracked PID rather than a blanket
+//! `waitpid(-1)`: the main thread runs `vakt-panel` via `Child::wait()`, and a
+//! wildcard reaper here would race it and steal the exit code.
 
 use crate::logfile::{self, BoundedLog};
 use nix::sys::signal::{Signal, kill};

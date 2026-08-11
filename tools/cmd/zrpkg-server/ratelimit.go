@@ -97,15 +97,11 @@ func (rl *rateLimiter) limit(next http.Handler) http.Handler {
 
 // clientIP returns the address a request should be rate-limited under.
 //
-// With trustProxy off (the default), this is always the direct TCP peer -
-// safe against spoofing, but every request looks identical when something
-// like the documented nginx reverse proxy sits in front of this server,
-// since RemoteAddr is then always the proxy's own loopback address rather
-// than the real client. With trustProxy on, a direct connection that is
-// itself from loopback is assumed to be that proxy, and its X-Real-IP
-// header - which only the proxy sits close enough to set correctly, not the
-// original client - is trusted instead. A request arriving directly (not
-// via loopback) still can't set X-Real-IP to dodge its own limit.
+// With trustProxy off (the default) this is the direct TCP peer: unspoofable,
+// but behind a reverse proxy every request looks like the proxy's loopback
+// address. With it on, a loopback peer is assumed to be that proxy and its
+// X-Real-IP is trusted. A request arriving directly still cannot set X-Real-IP
+// to dodge its own limit.
 func (rl *rateLimiter) clientIP(r *http.Request) string {
 	host := remoteAddrHost(r)
 	if rl.trustProxy && isLoopback(host) {

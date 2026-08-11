@@ -1,24 +1,17 @@
 //! Telling vakt-init that the daemon has finished starting.
 //!
-//! PID 1 listens on the socket named by `NOTIFY_SOCKET` and holds the boot
-//! sequence until the daemons it is waiting for have checked in, so the panel
-//! appears when the system is actually usable. The protocol is newline
-//! separated `KEY=value` pairs in one datagram, which is why this is a file and
-//! not a dependency: there is nothing to a client but the two functions below.
-//!
-//! Sending is best-effort by design. A daemon that cannot reach PID 1 has
-//! nothing useful to do about it, and refusing to work because the notification
-//! failed would turn a cosmetic problem into an outage.
+//! PID 1 listens on the socket named by `NOTIFY_SOCKET` and holds boot until
+//! the daemons check in. The protocol is newline-separated `KEY=value` pairs in
+//! one datagram. Sending is best-effort: a daemon that cannot reach PID 1 has
+//! nothing useful to do about it.
 
 use std::os::unix::net::UnixDatagram;
 
-/// Where to send. Set by vakt-init for every service it supervises; absent when
-/// the daemon is run by hand, in which case there is nobody to tell.
+/// Set by vakt-init for every service it supervises; absent when the daemon is
+/// run by hand.
 const SOCKET_ENV: &str = "NOTIFY_SOCKET";
 
-/// Announces that the daemon is up, with a one-line status for the panel.
-///
-/// Safe to call more than once: later calls just refresh the status line.
+/// Announces that the daemon is up. Safe to call more than once.
 pub fn ready(status: &str) {
     send(&format!(
         "READY=1\nNAME=vakt-net\nSTATUS={}\n",
@@ -67,8 +60,7 @@ mod tests {
         );
     }
 
-    /// With no socket in the environment this has to be a silent no-op, not a
-    /// panic - the daemon is perfectly runnable outside vakt-init.
+    /// The daemon is runnable outside vakt-init, so no socket means no-op.
     #[test]
     fn sending_without_a_socket_is_harmless() {
         unsafe { std::env::remove_var(SOCKET_ENV) };

@@ -208,9 +208,9 @@ fn connect(cfg: &NetConfig) -> Result<String, String> {
             return Err("wpa_supplicant failed to start".to_string());
         }
 
-        // Asking for a lease before the radio has associated wastes the whole
-        // DHCP timeout and reports "no address", which is true of every
-        // failure and diagnoses none of them.
+        // Asking for a lease before association wastes the DHCP timeout and
+        // reports "no address", which is true of every failure and diagnoses
+        // none of them.
         if !link::wait_for_carrier(&cfg.interface, ASSOC_TIMEOUT) {
             return Err(format!(
                 "did not associate with '{}' within {}s; wrong passphrase, out \
@@ -313,19 +313,10 @@ fn interface_address(interface: &str) -> Option<String> {
 
 /// Builds the wpa_supplicant configuration for one network.
 ///
-/// This used to shell out to `wpa_passphrase`, which is the documented way to
-/// turn a passphrase into a PSK, and there is no way to call it that is both
-/// correct and safe. Given the passphrase in argv it publishes the Wi-Fi
-/// password to every uid on the machine, `/proc/<pid>/cmdline` being mode
-/// 0444. Given it on stdin instead, it tries to turn off terminal echo first
-/// and a supervised daemon has no terminal, so it dies with
-/// `tcgetattr: Inappropriate ioctl for device` and the connection fails.
-///
-/// wpa_supplicant accepts a quoted passphrase and derives the PSK itself, so
-/// the subprocess buys nothing. Nor does it cost any secrecy: `wpa_passphrase`
-/// wrote the plaintext into this same file anyway, as a `#psk="..."` comment
-/// beside the hash, and [`write_private`] keeps the file 0600 and root-owned
-/// either way.
+/// Deliberately not `wpa_passphrase`: passing the passphrase in argv publishes
+/// it via `/proc/<pid>/cmdline`, and passing it on stdin makes it die with
+/// `tcgetattr: Inappropriate ioctl for device` since a daemon has no terminal.
+/// wpa_supplicant derives the PSK from a quoted passphrase itself.
 fn supplicant_config(ssid: &str, psk: &str) -> Result<String, String> {
     config_safe("network name", ssid)?;
     if ssid.len() > 32 {
@@ -370,17 +361,12 @@ fn config_safe(field: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Writes `contents` to `path` readable only by root.
+/// Writes `contents` to `path` readable only by root - this carries the
+/// network's password in the clear, and `std::fs::write` would create it 0644
+/// on a 0755 tmpfs.
 ///
-/// `std::fs::write` would create it 0644, and what goes in here is the
-/// supplicant configuration, which carries the network's password in the
-/// clear. `/run` is a tmpfs mounted 0755, so a world-readable copy there hands
-/// the Wi-Fi password to every uid on the system - including the unprivileged
-/// panel user and anything zrpkg installs.
-///
-/// Any stale file is removed first rather than being reopened and truncated:
-/// `OpenOptions::mode` only applies to a file it actually creates, so
-/// truncating an existing 0644 file would silently keep the wrong mode.
+/// Any stale file is removed first: `OpenOptions::mode` applies only to a file
+/// it creates, so truncating an existing 0644 file would keep the wrong mode.
 fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;

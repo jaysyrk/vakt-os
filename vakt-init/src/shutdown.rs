@@ -1,16 +1,12 @@
 //! Bringing the system down without losing what was written to it.
 //!
-//! PID 1 has no default signal dispositions - the kernel does not apply them to
-//! init - so a SIGTERM that would end any other process is silently discarded
-//! here unless it is handled. That is why the appliance had no way to shut down
-//! cleanly before: `poweroff` sends a signal to PID 1 and waits for it to do
-//! something about it.
+//! PID 1 has no default signal dispositions, so a SIGTERM that would end any
+//! other process is silently discarded here unless handled - and `poweroff`
+//! works by signalling PID 1 and waiting.
 //!
-//! Signals are collected through a `signalfd` on a dedicated thread rather than
-//! through a handler. A handler would have to hand the work to another thread
-//! anyway, since almost nothing that shutting down involves is safe to call
-//! from signal context; reading them off a file descriptor makes that explicit
-//! and removes the async-signal-safety question entirely.
+//! Signals come through a `signalfd` on a dedicated thread rather than a
+//! handler: almost nothing shutdown involves is safe in signal context, so
+//! reading them off a file descriptor removes the question entirely.
 
 use crate::mount;
 use crate::services::Control;

@@ -1,21 +1,18 @@
 //! The readiness and control socket at `/run/init.sock`.
 //!
-//! Daemons tell PID 1 when they have finished starting by sending a datagram
-//! to this socket, so the panel is drawn at the moment the system is actually
-//! usable rather than after a guessed delay. The wire format is deliberately
-//! the same shape as systemd's `sd_notify` - newline separated `KEY=value`
-//! pairs in a single datagram - because it costs a client about fifteen lines
-//! to speak and needs no library.
+//! Daemons tell PID 1 they have finished starting by sending a datagram here,
+//! so the panel is drawn when the system is usable rather than after a guessed
+//! delay. The format is the same shape as systemd's `sd_notify` - newline
+//! separated `KEY=value` pairs - because it needs no library to speak.
 //!
 //! ```text
 //! READY=1
 //! STATUS=lease acquired on eth0
 //! ```
 //!
-//! The sender is identified by the credentials the kernel attaches to the
-//! datagram (`SO_PASSCRED`), not by anything in the message body, so a service
-//! cannot report readiness on another service's behalf. `NAME=` is only
-//! consulted when the kernel supplied no credentials.
+//! The sender is identified by the credentials the kernel attaches
+//! (`SO_PASSCRED`), not by the message body, so a service cannot report
+//! readiness for another. `NAME=` is consulted only without credentials.
 
 use nix::sys::socket::{
     AddressFamily, ControlMessageOwned, MsgFlags, SockFlag, SockType, UnixAddr, bind, recvmsg,

@@ -247,13 +247,10 @@ fn console_loop(identity: Option<&Identity>, persistent: bool) {
         let round_started = std::time::Instant::now();
 
         println!("[Vakt-Init] Launching Vakt Panel...");
-        // Absolute path, not "vakt-panel": the console session's PATH puts
-        // the zrpkg install root first (see session_environment) so an
-        // operator can type an installed package's name directly, but that
-        // means a bare name here would let any installed package containing
-        // usr/bin/vakt-panel silently replace the real panel on every future
-        // launch. cttyhack's own exec only consults PATH for a name with no
-        // '/' in it, so a literal absolute path bypasses that lookup.
+        // Absolute path, not "vakt-panel": the session's PATH puts the zrpkg
+        // install root first, so a bare name would let any package shipping
+        // usr/bin/vakt-panel replace the real one. cttyhack only consults PATH
+        // for a name with no '/' in it.
         let panel = run_on_console(&["/usr/bin/vakt-panel"], identity, &session);
         report_exit("Vakt Panel", &panel);
 
@@ -308,10 +305,9 @@ fn console_loop(identity: Option<&Identity>, persistent: bool) {
 
 /// Says how a console program ended, rather than discarding it.
 ///
-/// The exit status is the only evidence there is about why the panel would
-/// not stay up: the panel draws over the screen, so anything it printed on
-/// the way out is usually gone by the time anyone looks. A status of 1 with
-/// no output is a very different problem from a signal.
+/// The panel draws over the screen, so anything it printed on the way out is
+/// gone by the time anyone looks - the exit status is the only evidence left,
+/// and a status of 1 is a very different problem from a signal.
 fn report_exit(what: &str, result: &std::io::Result<ExitStatus>) {
     use std::os::unix::process::ExitStatusExt;
 
@@ -451,17 +447,12 @@ fn watch_notifications(listener: Listener, control: Arc<Control>) {
 
 /// Loads a driver for every device the kernel has enumerated.
 ///
-/// Walking modaliases is what a udev rule would do; there is no udev here, and
-/// this runs a few times rather than watching for hotplug - loading a
-/// controller driver (e.g. a USB host controller) can itself cause the
-/// devices attached to it to finish enumerating and gain their own modalias
-/// only after this scan already passed them by, so one static snapshot can
-/// miss real hardware. modprobe is idempotent, so repeating this costs
-/// nothing for devices already bound.
+/// Walking modaliases is what a udev rule would do, and there is no udev here.
+/// It runs a few times because loading a controller driver can make the devices
+/// behind it enumerate and gain a modalias only after the scan passed them by.
+/// modprobe is idempotent, so repeating costs nothing.
 ///
-/// The image's own kernel is monolithic and has no modules at all, in which
-/// case there is nothing to load and running modprobe a few hundred times to
-/// be told so would only slow boot down.
+/// The image's own kernel is monolithic and has no modules at all.
 fn load_modules() {
     if !Path::new("/lib/modules").is_dir() {
         println!("[Vakt-Init] Monolithic kernel; no modules to load.");

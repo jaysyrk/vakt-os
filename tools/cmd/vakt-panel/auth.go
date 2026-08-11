@@ -17,10 +17,9 @@ const (
 	saltBytes          = 16
 )
 
-// authFilePath returns the persistent location when the data disk is
-// mounted, so a configured PIN survives a reboot, and the RAM-only path
-// otherwise - the same precedence vaktnet.go and zrpkgconf.go use for their
-// own configuration.
+// authFilePath prefers the persistent location so a PIN survives a reboot,
+// falling back to the RAM-only path - the same precedence vaktnet.go and
+// zrpkgconf.go use.
 func authFilePath() string {
 	if info, err := os.Stat("/persistent"); err == nil && info.IsDir() {
 		return persistentAuthFile
@@ -47,14 +46,13 @@ const (
 )
 
 // storedPIN reports whether the auth file holds something verifiable.
-// verifyPINAt fails safe for every candidate against a malformed value, the
+// verifyPINAt fails safe against a malformed value for every candidate, the
 // correct PIN included, so "exists" is not the same as "has a PIN".
 func storedPIN(path string) pinState {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// Only a missing file means no PIN. Anything else - typically a 0600
-		// file owned by root rather than the panel's user - means the PIN
-		// cannot be checked, which is not the same thing.
+		// Anything but a missing file - typically one owned by root rather
+		// than the panel's user - means the PIN cannot be checked.
 		if os.IsNotExist(err) {
 			return pinAbsent
 		}
@@ -79,16 +77,14 @@ func storedPIN(path string) pinState {
 // hasPINAt reports whether a usable PIN is configured.
 //
 // An unusable file counts as no PIN rather than a locked console: damaging it
-// requires already running as the panel's user, and `vakt.rootshell` is the
-// documented way past a forgotten PIN anyway. A console nobody can ever open
+// means already running as the panel's user, and a console nobody can open
 // again is the worse outcome. setupScreen says so in red.
 func hasPINAt(path string) bool {
 	return storedPIN(path) == pinUsable
 }
 
-// setPINAt hashes and stores a new PIN, replacing any existing one. Each call
-// draws a fresh salt, so two appliances (or two PINs set on the same one over
-// time) never produce the same stored bytes for the same PIN.
+// setPINAt hashes and stores a new PIN. Each call draws a fresh salt, so the
+// same PIN never produces the same stored bytes twice.
 func setPINAt(path, pin string) error {
 	salt := make([]byte, saltBytes)
 	if _, err := rand.Read(salt); err != nil {

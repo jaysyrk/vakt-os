@@ -14,11 +14,9 @@ const initSocket = "/run/init.sock"
 
 // requestShutdown asks PID 1 to bring the system down.
 //
-// The panel cannot do this itself. Signalling PID 1 needs privileges it
-// deliberately does not have, and calling reboot(2) from here would cut power
-// to a mounted disk with daemons still writing to it. Sending the request to
-// init instead means the ordered sequence - stop services, sync, unmount, power
-// off - happens whichever way the shutdown was asked for.
+// Signalling PID 1 needs privileges the panel deliberately lacks, and
+// reboot(2) here would cut power to a mounted disk with daemons still writing.
+// Asking init means the ordered sequence happens however shutdown was invoked.
 //
 // verb is "poweroff", "reboot", or "halt".
 func requestShutdown(verb string) error {
