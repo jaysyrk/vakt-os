@@ -88,7 +88,26 @@ pub fn confine(config_files: &[&str]) -> Result<String, Box<dyn std::error::Erro
         RulesetStatus::NotEnforced => {
             "sandbox INACTIVE (this kernel has no Landlock support)".to_string()
         }
+    } + &match unreachable(WRITABLE) {
+        blocked if blocked.is_empty() => String::new(),
+        blocked => format!(
+            " - WARNING: present but still denied: {}. Anything needing these \
+             will fail, and the error will name the helper rather than the \
+             sandbox.",
+            blocked.join(", ")
+        ),
     })
+}
+
+/// Paths that exist but still cannot be opened once the ruleset is sealed.
+///
+/// A rule that never made it in surfaces only as an error several layers
+/// down - "Cannot open RFKILL control device" rather than anything naming
+/// Landlock - so the daemon checks its own grants and says so.
+fn unreachable<'a>(paths: &'a [&'a str]) -> Vec<&'a str> {
+    existing(paths)
+        .filter(|p| std::fs::File::open(p).is_err())
+        .collect()
 }
 
 /// Landlock rules name open file descriptors, so a path that does not exist is
@@ -111,5 +130,12 @@ mod tests {
     fn absent_paths_are_filtered_out() {
         let kept: Vec<&str> = existing(&["/dev/null", "/definitely/not/here"]).collect();
         assert_eq!(kept, vec!["/dev/null"]);
+    }
+
+    /// A merely absent path is not a denied one, so it must not be reported
+    /// as a sandbox problem on hardware that simply lacks the device.
+    #[test]
+    fn absence_is_not_denial() {
+        assert!(unreachable(&["/dev/null", "/definitely/not/here"]).is_empty());
     }
 }
