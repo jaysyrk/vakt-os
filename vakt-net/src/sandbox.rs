@@ -88,7 +88,7 @@ pub fn confine(config_files: &[&str]) -> Result<String, Box<dyn std::error::Erro
         RulesetStatus::NotEnforced => {
             "sandbox INACTIVE (this kernel has no Landlock support)".to_string()
         }
-    } + &match unreachable(WRITABLE) {
+    } + &match unreachable(&[WRITABLE, config_files].concat()) {
         blocked if blocked.is_empty() => String::new(),
         blocked => format!(
             " - WARNING: present but still denied: {}. Anything needing these \

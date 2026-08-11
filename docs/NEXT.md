@@ -12,6 +12,14 @@ being done yet.
 `wpa_passphrase` needed a terminal a daemon does not have, so `vakt-net` now
 writes the supplicant configuration itself. That fix has never run on a radio.
 
+What the appliance has been observed to do: `/dev/rfkill` exists,
+`/sys/class/ieee80211/` lists `phy0`, and `wlan0`'s `operstate` stays `down`.
+So the driver and its firmware are fine and the radio is registered — the
+failure is at association, with `wpa_supplicant` reporting it cannot open the
+rfkill control device on every retry.
+
+- [ ] `head -5 /run/vakt-net.log` — the sandbox line says whether Landlock is
+      enforced at all. Everything below assumes it is, and that is unverified
 - [ ] Rebuild, boot on the machine, set up `Stkyezone_EXT` from the panel
 - [ ] `cat /run/vakt-net.status` reaches `connected` with an address
 - [ ] Reboot and confirm it reconnects with no prompting
@@ -48,6 +56,13 @@ an image with the 0700 root that shipped, which is the point of it.
 matching the running kernel, so it cannot be built in a container. Every
 `VAKT_KERNEL=host` change is only ever tested by someone building it on a real
 Arch machine.
+
+**Nothing verifies that the Landlock rules actually apply.** The sandbox tests
+cover which paths get filtered before reaching the kernel, not enforcement:
+a ruleset built in a container returns `NotEnforced`, so a probe that opens a
+deliberately ungranted device node succeeds there and proves nothing. The
+daemons now log any path they granted and still cannot open, which moves this
+from untestable to at least observable on the appliance.
 
 ---
 
