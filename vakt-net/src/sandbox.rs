@@ -14,8 +14,9 @@
 //!   is done by `ip`, `wpa_supplicant` and `udhcpc`, and a
 //!   Landlock ruleset is inherited by everything they run in turn;
 //! * read and write under `/run`, where the supplicant config, the pid files,
-//!   the resolver configuration and the status file live, plus four device
-//!   nodes by name (`/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom`);
+//!   the resolver configuration and the status file live, plus a few device
+//!   nodes by name - including `/dev/rfkill`, which wpa_supplicant needs to
+//!   see whether the radio is blocked;
 //! * read on `/proc` and `/sys`, which the network tools consult;
 //! * read on **exactly** `/persistent/etc/vakt-net.conf` and its RAM-only
 //!   fallback - the credentials file is the only thing under `/persistent` this
@@ -46,15 +47,20 @@ const READABLE: &[&str] = &["/proc", "/sys"];
 /// Paths the daemon may read and write.
 ///
 /// `/run` holds the supplicant configuration, the pid files, the status file
-/// and the resolver configuration that `/etc/resolv.conf` points at. The four
-/// device nodes are named individually rather than granting `/dev`: the
-/// network daemon has no business reaching the framebuffer or the disk.
+/// and the resolver configuration that `/etc/resolv.conf` points at. Device
+/// nodes are named individually rather than granting `/dev`: the network
+/// daemon has no business reaching the framebuffer or the disk.
 const WRITABLE: &[&str] = &[
     "/run",
     "/dev/null",
     "/dev/zero",
     "/dev/random",
     "/dev/urandom",
+    // wpa_supplicant opens this to see whether the radio is blocked, and it
+    // inherits this ruleset. Without it: "Cannot open RFKILL control device",
+    // no association, and a Wi-Fi network that never comes up. Filtered by
+    // `existing`, so a machine with no radio simply has no rule for it.
+    "/dev/rfkill",
 ];
 
 /// Applies the ruleset to this process. Returns a line describing what the
@@ -91,4 +97,19 @@ pub fn confine(config_files: &[&str]) -> Result<String, Box<dyn std::error::Erro
 /// before it reaches the kernel.
 fn existing<'a>(paths: &'a [&'a str]) -> impl Iterator<Item = &'a str> {
     paths.iter().copied().filter(|p| Path::new(p).exists())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A machine with no radio has no `/dev/rfkill`, and a Landlock rule for a
+    /// path that does not exist is an error rather than a no-op - so the
+    /// filter is what stops the daemon failing to start on wired-only
+    /// hardware.
+    #[test]
+    fn absent_paths_are_filtered_out() {
+        let kept: Vec<&str> = existing(&["/dev/null", "/definitely/not/here"]).collect();
+        assert_eq!(kept, vec!["/dev/null"]);
+    }
 }
