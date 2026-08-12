@@ -266,14 +266,27 @@ ln -sf /etc/ca-certificates/extracted/tls-ca-bundle.pem "$ROOTFS/etc/ssl/certs/c
 # which /etc/resolv.conf points at, because /etc is read-only by then.
 cat > "$ROOTFS/usr/share/udhcpc/default.script" <<'EOF'
 #!/bin/sh
+# replace, not add: `ip route add default` fails with EEXIST when a default
+# route already exists, so a second interface taking a lease - Wi-Fi coming up
+# behind a cable - would leave every packet going out the old one. `ip addr
+# add` fails the same way on every lease renewal.
+#
+# Everything here comes from a DHCP server, which is not ours, so it is quoted.
 case "$1" in
     bound|renew)
-        ip addr add $ip/$mask dev $interface
-        ip route add default via $router
+        ip addr replace "$ip/$mask" dev "$interface"
+        # $router may name several gateways; the first is the default.
+        for r in $router; do
+            ip route replace default via "$r" dev "$interface"
+            break
+        done
         : > /run/resolv.conf
         for i in $dns; do
             echo "nameserver $i" >> /run/resolv.conf
         done
+        ;;
+    deconfig)
+        ip addr flush dev "$interface"
         ;;
 esac
 EOF

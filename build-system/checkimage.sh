@@ -103,6 +103,24 @@ if exists "lib/modules"; then
   fi
 fi
 
+# `ip route add default` fails with EEXIST once any default route exists, so an
+# appliance that took a wired lease first keeps routing through the cable after
+# Wi-Fi comes up, and says nothing but "RTNETLINK answers: File exists".
+DHCP_SCRIPT=$(gzip -dc "$ARCHIVE" |
+  cpio -i --to-stdout usr/share/udhcpc/default.script 2>/dev/null || true)
+if [ -z "$DHCP_SCRIPT" ]; then
+  fail "no usr/share/udhcpc/default.script; udhcpc would configure nothing"
+else
+  if grep -qE '^\s*ip route add default' <<<"$DHCP_SCRIPT"; then
+    fail "the DHCP script uses 'ip route add default'; a second interface \
+taking a lease cannot become the default route"
+  fi
+  if grep -qE '^\s*ip addr add ' <<<"$DHCP_SCRIPT"; then
+    fail "the DHCP script uses 'ip addr add'; every lease renewal fails with \
+'Address already assigned'"
+  fi
+fi
+
 if [ "$failures" -ne 0 ]; then
   echo "[!] $failures problem(s) in $ARCHIVE" >&2
   exit 1
