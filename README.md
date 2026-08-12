@@ -59,6 +59,33 @@ rootfs, a Rust PID 1, and the tools in this repo.
 
 ---
 
+## What it looks like
+
+The whole appliance is driven from one console panel. No display server, no
+mouse, 80x25.
+
+**Intrusion detection**, live. Here it has caught a real change to the
+persistent disk — the PIN file being written seconds earlier:
+
+![The intrusion detection page, showing one ADDED alert for /persistent/etc/vakt-panel.auth and an activity sparkline](docs/screenshots/intrusion-detection.png)
+
+**Services** — what the supervisor is running, with the PID, restart count and
+whether each daemon has reported ready:
+
+![The services page listing vakt-net and vakt-ids, both running and ready](docs/screenshots/services.png)
+
+**Network**, and **first boot**, which insists you set a PIN before anything
+else — because until you do, console access is total:
+
+![The network status page showing a connected interface and its address](docs/screenshots/network.png)
+
+![The first-boot screen asking for a new PIN and a confirmation](docs/screenshots/first-boot.png)
+
+These are captured from a real boot, not mocked up: `build-system/screenshots.py`
+boots the ISO under QEMU and dumps the console, so anyone can regenerate them.
+
+---
+
 ## Try it in a VM (5 minutes)
 
 Needs an **Arch host** with root (the build uses `pacman`).
