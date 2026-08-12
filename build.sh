@@ -329,6 +329,16 @@ if [ "$VAKT_KERNEL" = "host" ]; then
         [ -n "$skip" ] && continue
         cp -r "$entry" "$ROOTFS/lib/firmware/" 2>/dev/null || true
     done
+
+    # A driver that loads without its firmware leaves an interface that exists,
+    # enumerates and never works - which looks like a configuration problem and
+    # is not one. Advisory, not fatal: the skipped categories above are loaded
+    # on most build machines and will be listed here on purpose.
+    "$PROJECT_ROOT/build-system/checkfirmware.sh" "$ROOTFS/lib/firmware" || {
+        echo "[!] Anything above in ${VAKT_FIRMWARE_SKIP:-a skipped category} is"
+        echo "[!] deliberate. Anything else is hardware this image cannot drive."
+    }
+
     copy_deps "$(command -v modprobe)" "$ROOTFS"
     # busybox's own modprobe applet (linked below, into /bin) can't decompress
     # the .ko.zst/.ko.xz files a real kernel package ships, and /bin comes
