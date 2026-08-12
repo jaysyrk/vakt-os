@@ -194,15 +194,15 @@ fn connect(cfg: &NetConfig) -> Result<String, String> {
         stop_previous_supplicant();
 
         log!("Generating supplicant config for SSID '{}'.", ssid);
-        let conf = supplicant_config(ssid, psk)?;
-        write_private(Path::new(WPA_CONF), conf.as_bytes())
-            .map_err(|e| format!("cannot write {}: {}", WPA_CONF, e))?;
+        let mut started = start_supplicant(ssid, psk, &cfg.interface, true)?;
 
-        log!("Starting wpa_supplicant on {}.", cfg.interface);
-        let started = Command::new("wpa_supplicant")
-            .args(["-B", "-i", &cfg.interface, "-c", WPA_CONF, "-P", WPA_PID])
-            .status()
-            .map_err(|e| format!("wpa_supplicant unavailable: {}", e))?;
+        // A wpa_supplicant built without SAE does not skip the option, it
+        // rejects the whole file and exits - so the modern block cannot simply
+        // be written and hoped for.
+        if !started.success() {
+            log!("Configuration refused; retrying without WPA3 and hidden-network support.");
+            started = start_supplicant(ssid, psk, &cfg.interface, false)?;
+        }
 
         if !started.success() {
             return Err("wpa_supplicant failed to start".to_string());
@@ -311,13 +311,35 @@ fn interface_address(interface: &str) -> Option<String> {
         })
 }
 
+/// Writes the supplicant configuration and starts the daemon on `interface`.
+fn start_supplicant(
+    ssid: &str,
+    psk: &str,
+    interface: &str,
+    wpa3: bool,
+) -> Result<std::process::ExitStatus, String> {
+    let conf = supplicant_config(ssid, psk, wpa3)?;
+    write_private(Path::new(WPA_CONF), conf.as_bytes())
+        .map_err(|e| format!("cannot write {}: {}", WPA_CONF, e))?;
+
+    log!("Starting wpa_supplicant on {}.", interface);
+    Command::new("wpa_supplicant")
+        .args(["-B", "-i", interface, "-c", WPA_CONF, "-P", WPA_PID])
+        .status()
+        .map_err(|e| format!("wpa_supplicant unavailable: {}", e))
+}
+
 /// Builds the wpa_supplicant configuration for one network.
 ///
 /// Deliberately not `wpa_passphrase`: passing the passphrase in argv publishes
 /// it via `/proc/<pid>/cmdline`, and passing it on stdin makes it die with
 /// `tcgetattr: Inappropriate ioctl for device` since a daemon has no terminal.
 /// wpa_supplicant derives the PSK from a quoted passphrase itself.
-fn supplicant_config(ssid: &str, psk: &str) -> Result<String, String> {
+///
+/// With `wpa3`, the network also accepts SAE and looks for hidden networks.
+/// Without it, the block is the bare minimum every build understands - see
+/// [`connect`] for why both exist.
+fn supplicant_config(ssid: &str, psk: &str, wpa3: bool) -> Result<String, String> {
     config_safe("network name", ssid)?;
     if ssid.len() > 32 {
         return Err("a Wi-Fi network name cannot be longer than 32 characters".to_string());
@@ -335,7 +357,21 @@ fn supplicant_config(ssid: &str, psk: &str) -> Result<String, String> {
         format!("\tpsk=\"{}\"\n", psk)
     };
 
-    Ok(format!("network={{\n\tssid=\"{}\"\n{}}}\n", ssid, psk_line))
+    // Without key_mgmt, wpa_supplicant defaults to WPA-PSK and WPA-EAP, so a
+    // WPA3-only network never associates. Listing all three keeps WPA2 working.
+    // ieee80211w=1 negotiates management-frame protection, which SAE requires
+    // and WPA2 ignores; =2 would demand it and break WPA2. scan_ssid finds a
+    // network that does not broadcast its name.
+    let extras = if wpa3 {
+        "\tkey_mgmt=WPA-PSK WPA-PSK-SHA256 SAE\n\tieee80211w=1\n\tscan_ssid=1\n"
+    } else {
+        ""
+    };
+
+    Ok(format!(
+        "network={{\n\tssid=\"{}\"\n{}{}}}\n",
+        ssid, psk_line, extras
+    ))
 }
 
 /// Rejects anything that cannot survive being written between double quotes.
@@ -452,12 +488,39 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// Without key_mgmt, wpa_supplicant defaults to WPA-PSK and WPA-EAP, so a
+    /// WPA3-only network never associates and a hidden one is never found.
+    #[test]
+    fn the_modern_block_offers_wpa3_and_finds_hidden_networks() {
+        let conf = supplicant_config("Net", "password123", true).unwrap();
+        assert!(
+            conf.contains("key_mgmt=WPA-PSK WPA-PSK-SHA256 SAE"),
+            "{}",
+            conf
+        );
+        assert!(conf.contains("scan_ssid=1"), "{}", conf);
+        // =2 would demand management-frame protection and break WPA2.
+        assert!(conf.contains("ieee80211w=1"), "{}", conf);
+    }
+
+    /// The fallback exists because a wpa_supplicant without SAE rejects the
+    /// whole file rather than the one option, so it has to be exactly the
+    /// block that worked before any of this was added.
+    #[test]
+    fn the_fallback_block_is_the_bare_minimum() {
+        let conf = supplicant_config("Net", "password123", false).unwrap();
+        assert_eq!(
+            conf,
+            "network={\n\tssid=\"Net\"\n\tpsk=\"password123\"\n}\n"
+        );
+    }
+
     /// The passphrase must reach wpa_supplicant without ever being an
     /// argument and without needing a terminal - the two ways this was wrong
     /// before.
     #[test]
     fn a_passphrase_is_written_quoted_for_wpa_supplicant_to_derive() {
-        let conf = supplicant_config("Example_Network", "correcthorsebattery").unwrap();
+        let conf = supplicant_config("Example_Network", "correcthorsebattery", false).unwrap();
         assert_eq!(
             conf,
             "network={\n\tssid=\"Example_Network\"\n\tpsk=\"correcthorsebattery\"\n}\n"
@@ -470,7 +533,7 @@ mod tests {
     #[test]
     fn an_already_derived_psk_is_written_unquoted() {
         let raw = "a".repeat(64);
-        let conf = supplicant_config("Net", &raw).unwrap();
+        let conf = supplicant_config("Net", &raw, true).unwrap();
         assert!(conf.contains(&format!("psk={}\n", raw)), "{}", conf);
         assert!(
             !conf.contains("psk=\""),
@@ -483,33 +546,36 @@ mod tests {
     /// append directives to the supplicant's configuration.
     #[test]
     fn a_newline_cannot_smuggle_extra_configuration_in() {
-        let injected = supplicant_config("Net\n}\nnetwork={\n\tssid=\"Evil\"", "password123");
+        let injected = supplicant_config("Net\n}\nnetwork={\n\tssid=\"Evil\"", "password123", true);
         assert!(injected.is_err(), "a newline in the SSID must be refused");
 
-        let via_psk = supplicant_config("Net", "pass\n\tkey_mgmt=NONE");
+        let via_psk = supplicant_config("Net", "pass\n\tkey_mgmt=NONE", true);
         assert!(
             via_psk.is_err(),
             "a newline in the password must be refused"
         );
 
-        let quoted = supplicant_config("Net", "pass\"word\"here");
+        let quoted = supplicant_config("Net", "pass\"word\"here", true);
         assert!(quoted.is_err(), "a double quote must be refused");
     }
 
     #[test]
     fn a_passphrase_wpa_cannot_use_is_refused_before_the_radio_is_touched() {
         assert!(
-            supplicant_config("Net", "short").is_err(),
+            supplicant_config("Net", "short", true).is_err(),
             "under 8 characters"
         );
         assert!(
-            supplicant_config("Net", &"x".repeat(64)).is_err(),
+            supplicant_config("Net", &"x".repeat(64), true).is_err(),
             "over 63 characters"
         );
-        assert!(supplicant_config("Net", "").is_err(), "empty");
-        assert!(supplicant_config("", "password123").is_err(), "empty SSID");
+        assert!(supplicant_config("Net", "", true).is_err(), "empty");
         assert!(
-            supplicant_config(&"n".repeat(33), "password123").is_err(),
+            supplicant_config("", "password123", true).is_err(),
+            "empty SSID"
+        );
+        assert!(
+            supplicant_config(&"n".repeat(33), "password123", true).is_err(),
             "an SSID cannot exceed 32 characters"
         );
     }
@@ -518,7 +584,7 @@ mod tests {
     fn an_ordinary_password_with_punctuation_is_accepted() {
         // The parser already allows = # and spaces in a password; the config
         // writer must not quietly disagree with it.
-        let conf = supplicant_config("Net", "a b=c#d!$%").unwrap();
+        let conf = supplicant_config("Net", "a b=c#d!$%", true).unwrap();
         assert!(conf.contains("psk=\"a b=c#d!$%\"\n"), "{}", conf);
     }
 }

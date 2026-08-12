@@ -30,6 +30,13 @@ KERNEL="$1"; INITRAMFS="$2"; DISK="$3"
 LOG="${BOOT_LOG:-/tmp/vakt-wifi.log}"
 BOOT_TIMEOUT="${BOOT_TIMEOUT:-240}"
 
+# WPA2 by default; set MODE=wpa3 for an SAE-only access point.
+if [ "${MODE:-wpa2}" = "wpa3" ]; then
+    AP_KEY_MGMT="SAE"; AP_PMF=2
+else
+    AP_KEY_MGMT="WPA-PSK"; AP_PMF=1
+fi
+
 WORK=$(mktemp -d); FIFO="$WORK/console-in"; mkfifo "$FIFO"; : > "$LOG"
 cleanup() {
     exec 3>&- 2>/dev/null || true
@@ -72,7 +79,7 @@ echo "[+] Building an access point on wlan1..."
 {
     echo 'ip link set wlan1 up'
     # A WPA2 AP. mode=2 is wpa_supplicant's own AP mode, so no hostapd needed.
-    echo 'printf "network={\n ssid=\"VaktTest\"\n psk=\"testpassword123\"\n mode=2\n frequency=2412\n key_mgmt=WPA-PSK\n proto=RSN\n pairwise=CCMP\n group=CCMP\n}\n" > /run/ap.conf'
+    echo "printf 'network={\n ssid=\"VaktTest\"\n psk=\"testpassword123\"\n mode=2\n frequency=2412\n key_mgmt=$AP_KEY_MGMT\n proto=RSN\n pairwise=CCMP\n group=CCMP\n ieee80211w=$AP_PMF\n}\n' > /run/ap.conf"
     echo 'wpa_supplicant -B -i wlan1 -c /run/ap.conf -P /run/ap.pid'
     echo 'sleep 6'
     echo 'ip addr add 10.9.0.1/24 dev wlan1'
