@@ -457,10 +457,10 @@ mod tests {
     /// before.
     #[test]
     fn a_passphrase_is_written_quoted_for_wpa_supplicant_to_derive() {
-        let conf = supplicant_config("Stkyezone_EXT", "correcthorsebattery").unwrap();
+        let conf = supplicant_config("Example_Network", "correcthorsebattery").unwrap();
         assert_eq!(
             conf,
-            "network={\n\tssid=\"Stkyezone_EXT\"\n\tpsk=\"correcthorsebattery\"\n}\n"
+            "network={\n\tssid=\"Example_Network\"\n\tpsk=\"correcthorsebattery\"\n}\n"
         );
     }
 
