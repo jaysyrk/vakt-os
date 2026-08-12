@@ -81,10 +81,24 @@ jobs:
           # unbootable image, so exercise it against archives with the two
           # faults that have actually shipped.
           WORK=$(mktemp -d)
-          mkdir -p "$WORK/img"/{usr/bin,bin,lib/modules}
+          mkdir -p "$WORK/img"/{usr/bin,bin,lib/modules,usr/share/udhcpc}
           mkdir -p "$WORK/img/lib64"
           touch "$WORK/img"/{init,usr/bin/vakt-panel,bin/busybox,usr/bin/modprobe} \
             "$WORK/img/lib64/ld-linux-x86-64.so.2"
+
+          # The real image always ships this, and checkimage.sh reads it.
+          cat > "$WORK/img/usr/share/udhcpc/default.script" <<'SCRIPT'
+          #!/bin/sh
+          case "$1" in
+              bound|renew)
+                  ip addr replace "$ip/$mask" dev "$interface"
+                  for r in $router; do
+                      ip route replace default via "$r" dev "$interface"
+                      break
+                  done
+                  ;;
+          esac
+          SCRIPT
           # /bin/sh is a busybox symlink in the real image, and cpio lists a
           # symlink as `bin/sh -> busybox` - so the fixture has to be a
           # symlink too, or the listing parser never gets tested on one.
@@ -109,6 +123,17 @@ jobs:
           chmod 644 "$WORK/img/init" && pack "$WORK/deadinit.cpio.gz"
           if ./build-system/checkimage.sh "$WORK/deadinit.cpio.gz" 2>/dev/null; then
             echo "::error::checkimage.sh passed an image whose /init is not executable"; exit 1
+          fi
+
+          # `ip route add default` silently leaves the default route on the
+          # first interface to take a lease, so Wi-Fi behind a cable routes
+          # nowhere useful while still reporting connected.
+          chmod 755 "$WORK/img/init"
+          printf '#!/bin/sh\nip addr add $ip/$mask dev $interface\nip route add default via $router\n' \
+            > "$WORK/img/usr/share/udhcpc/default.script"
+          pack "$WORK/oldroute.cpio.gz"
+          if ./build-system/checkimage.sh "$WORK/oldroute.cpio.gz" 2>/dev/null; then
+            echo "::error::checkimage.sh passed an image whose DHCP script uses 'ip route add default'"; exit 1
           fi
           echo "checkimage.sh rejects the known-bad images"
 
