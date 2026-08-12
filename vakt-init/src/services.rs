@@ -8,6 +8,7 @@
 //! `waitpid(-1)`: the main thread runs `vakt-panel` via `Child::wait()`, and a
 //! wildcard reaper here would race it and steal the exit code.
 
+use crate::console::note;
 use crate::logfile::{self, BoundedLog};
 use nix::sys::signal::{Signal, kill};
 use nix::unistd::Pid;
@@ -344,9 +345,10 @@ impl Managed {
                 Some((reader, log))
             }
             Err(e) => {
-                println!(
+                note!(
                     "[Vakt-Init] \x1b[1;33mNo log capture for '{}': {}\x1b[0m",
-                    self.spec.name, e
+                    self.spec.name,
+                    e
                 );
                 cmd.stdout(Stdio::null()).stderr(Stdio::null());
                 None
@@ -357,9 +359,10 @@ impl Managed {
             Ok(child) => {
                 let pid = child.id();
                 let _ = std::fs::write(self.pid_path(), format!("{}\n", pid));
-                println!(
+                note!(
                     "[Vakt-Init] Started service '{}' (pid {}).",
-                    self.spec.name, pid
+                    self.spec.name,
+                    pid
                 );
                 control.register(pid, self.spec.name);
                 self.child = Some(child);
@@ -373,9 +376,10 @@ impl Managed {
                 }
             }
             Err(e) => {
-                println!(
+                note!(
                     "[Vakt-Init] \x1b[1;33mFailed to start '{}': {}\x1b[0m",
-                    self.spec.name, e
+                    self.spec.name,
+                    e
                 );
                 self.child = None;
                 self.state = State::Failed;
@@ -468,9 +472,10 @@ impl Supervisor {
                 Ok(None) => {}
                 Ok(Some(exit)) => {
                     let pid = Some(child.id());
-                    println!(
+                    note!(
                         "[Vakt-Init] Service '{}' exited ({}).",
-                        service.spec.name, exit
+                        service.spec.name,
+                        exit
                     );
                     service.child = None;
                     service.clear_pid_file();
@@ -493,9 +498,10 @@ impl Supervisor {
 
                     service.restarts += 1;
                     if service.restarts > MAX_RESTARTS {
-                        println!(
+                        note!(
                             "[Vakt-Init] \x1b[1;33mService '{}' crashed {} times; giving up.\x1b[0m",
-                            service.spec.name, service.restarts
+                            service.spec.name,
+                            service.restarts
                         );
                         service.state = State::Failed;
                         service.detail = format!("crashed {} times in under 60s", service.restarts);
@@ -503,9 +509,10 @@ impl Supervisor {
                         continue;
                     }
 
-                    println!(
+                    note!(
                         "[Vakt-Init] Restarting '{}' (attempt {}).",
-                        service.spec.name, service.restarts
+                        service.spec.name,
+                        service.restarts
                     );
                     service.start(&control);
                 }
@@ -542,7 +549,7 @@ impl Supervisor {
         if live.is_empty() {
             return;
         }
-        println!("[Vakt-Init] Stopping services: {}.", live.join(", "));
+        note!("[Vakt-Init] Stopping services: {}.", live.join(", "));
 
         for service in &mut self.services {
             if let Some(child) = service.child.as_ref() {
@@ -562,7 +569,7 @@ impl Supervisor {
             let Some(child) = service.child.as_mut() else {
                 continue;
             };
-            println!(
+            note!(
                 "[Vakt-Init] \x1b[1;33mService '{}' ignored SIGTERM; killing it.\x1b[0m",
                 service.spec.name
             );
@@ -775,17 +782,32 @@ mod tests {
         sup.start_all();
         let pid = sup.services[0].pid().expect("service should be running");
 
-        let status = std::fs::read_to_string(format!("/proc/{}/status", pid)).unwrap();
-        let sigblk = status
-            .lines()
-            .find_map(|l| l.strip_prefix("SigBlk:"))
-            .expect("SigBlk in /proc/<pid>/status")
-            .trim()
-            .to_string();
-        let blocked_bits = u64::from_str_radix(&sigblk, 16).unwrap();
-
         // SIGTERM is 15, so bit 14 in the mask /proc reports.
         let sigterm_bit = 1u64 << (Signal::SIGTERM as i32 - 1);
+
+        // The child carries the inherited mask between fork and pre_exec, so a
+        // single read can catch it before it has been cleared and fail a
+        // correct implementation. Poll instead - bounded, so a mask that never
+        // clears still fails.
+        let read_sigblk = || -> String {
+            std::fs::read_to_string(format!("/proc/{}/status", pid))
+                .unwrap()
+                .lines()
+                .find_map(|l| l.strip_prefix("SigBlk:"))
+                .expect("SigBlk in /proc/<pid>/status")
+                .trim()
+                .to_string()
+        };
+
+        let mut sigblk = read_sigblk();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline
+            && u64::from_str_radix(&sigblk, 16).unwrap() & sigterm_bit != 0
+        {
+            std::thread::sleep(Duration::from_millis(20));
+            sigblk = read_sigblk();
+        }
+        let blocked_bits = u64::from_str_radix(&sigblk, 16).unwrap();
         assert_eq!(
             blocked_bits & sigterm_bit,
             0,

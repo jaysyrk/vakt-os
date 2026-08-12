@@ -10,6 +10,9 @@ import (
 	"github.com/rivo/tview"
 )
 
+// Wide enough for "(i) Intrusion Detection" plus both borders.
+const menuWidth = 26
+
 func main() {
 	app := tview.NewApplication()
 	pages := tview.NewPages()
@@ -386,6 +389,12 @@ func main() {
 		AddItem("Exit to Shell", "Drop to a shell prompt", 'q', func() {
 			app.Stop()
 		})
+	// A console is 80x25 and nothing here scrolls. With the descriptions shown
+	// the menu needed 24 of the 25 rows, and a proportional width gave it 18
+	// columns for entries up to 38 wide - so every second line read "Overview
+	// of sy". The shortcut letter and the name carry the meaning; the
+	// descriptions were the part being destroyed.
+	list.ShowSecondaryText(false)
 	list.SetBorder(true).SetTitle(" Main Menu ")
 
 	// Esc targets list, which is not part of the lock/setup screen's tree -
@@ -399,9 +408,11 @@ func main() {
 		return event
 	})
 
+	// Fixed, not proportional: the widest entry is "(i) Intrusion Detection"
+	// at 23 columns, and a share of 80 does not reliably cover it.
 	flex := tview.NewFlex().
-		AddItem(list, 0, 1, true).
-		AddItem(pages, 0, 3, false)
+		AddItem(list, menuWidth, 0, true).
+		AddItem(pages, 0, 1, false)
 
 	title := tview.NewTextView().
 		SetText(" VAKT OS SECURITY APPLIANCE ").
@@ -414,6 +425,10 @@ func main() {
 
 	app.EnableMouse(true)
 	gate := authGateRoot(app, mainLayout, list, func() { unlocked = true })
+	// The console vakt-init hands over is still covered in boot messages, and
+	// tcell only repaints cells it has content for.
+	fmt.Print("\033[2J\033[H")
+
 	if err := app.SetRoot(gate, true).Run(); err != nil {
 		panic(err)
 	}

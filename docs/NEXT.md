@@ -81,29 +81,43 @@ from untestable to at least observable on the appliance.
 
 ---
 
-## Known defect: init talks over the console session
+## Open: a stray fragment on the Dashboard page
 
-The supervisor runs on a background thread and prints with `println!`, which is
-PID 1's stdout — the same `/dev/console` the panel and the shell run on. A
-service reporting ready while someone is typing splices `[Vakt-Init] Service
-'vakt-net' is ready.` into their command line. Observed on real hardware: a
-`cat /run/vakt-net.status` turned into a "can't open" error for a path that
-was never typed.
+A screenshot of the panel shows `t done` immediately after the dashboard's
+last line. It is reproducible, always in the same place, and only on the
+Dashboard — Services, Network and Intrusion Detection are clean in the same
+session.
 
-Cosmetic-looking, but it makes the console untrustworthy exactly when someone
-is debugging, and every service already logs its own output to a file — this
-is only the supervisor's own chatter.
+Ruled out, each empirically:
 
-The shape of the fix: a flag saying an interactive session owns the console,
-set for the lifetime of each `run_on_console` child. While it is set, the
-supervisor's messages append to a log instead of the console; boot output,
-which happens before any session exists, is unchanged. Nothing is lost either
-way, which is the property that makes it safe.
+- **The panel does not emit it.** Driven over a serial console, the string
+  `done` appears nowhere in its entire output.
+- **It is not in the binary.** `strings` on the built `vakt-panel` shows the
+  dashboard text ending at `...at any time.`
+- **It is not in any source**, in any language, anywhere in the tree.
+- **It is not the kernel.** `dmesg | grep -i done` is empty.
+- **It is not boot-log residue showing through.** Clearing the console before
+  the panel starts does not remove it, and the other pages would show it too.
 
-Not implemented yet on purpose: it changes PID 1's output, and it cannot be
-verified without booting the image. `build-system/boottest.sh` is the right
-place to assert it — a marker printed by a service after a shell prompt must
-not appear on the console.
+Worth someone with fresh eyes. It is cosmetic, but it is in the first
+screenshot anybody sees.
+
+---
+
+## Fixed: init talking over the console session
+
+The supervisor and the readiness watcher run on background threads and printed
+with `println!` to PID 1's stdout — the same `/dev/console` the panel and the
+shell use. A service reporting ready while someone typed spliced
+`[Vakt-Init] Service 'vakt-net' is ready.` into their command line; observed on
+real hardware, where a `cat /run/vakt-net.status` became a "can't open" error
+for a path nobody typed.
+
+`console::claim()` now marks the console as owned for the lifetime of each
+`run_on_console` child, and messages from background threads go to
+`/run/vakt-init.log` instead. Nothing is lost — they are written to the log
+either way — and boot output, which happens before any session exists, is
+unchanged.
 
 ---
 

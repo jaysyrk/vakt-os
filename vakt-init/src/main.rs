@@ -5,6 +5,7 @@
 //! the panel as an unprivileged user. It is also the only process that can shut
 //! the machine down cleanly, so it stays for the whole life of the system.
 
+mod console;
 mod envblock;
 mod logfile;
 mod mount;
@@ -15,6 +16,7 @@ mod shutdown;
 mod sysctl;
 mod update;
 
+use console::note;
 use notify::Listener;
 use privilege::Identity;
 use services::Control;
@@ -343,6 +345,10 @@ fn run_on_console(
     identity: Option<&Identity>,
     session: &[(&str, String)],
 ) -> std::io::Result<ExitStatus> {
+    // Held for as long as the child owns the console. Background threads write
+    // to the log instead of over whatever it is drawing.
+    let _console = console::claim();
+
     let mut command = Command::new("setsid");
     command.arg("cttyhack");
     command.args(argv);
@@ -438,8 +444,10 @@ fn watch_notifications(listener: Listener, control: Arc<Control>) {
                 message.name.as_deref(),
                 message.status.as_deref(),
             ) {
-                Some(name) => println!("[Vakt-Init] Service '{}' is ready.", name),
-                None => println!("[Vakt-Init] Ignoring readiness from an unknown sender."),
+                Some(name) => {
+                    note!("[Vakt-Init] Service '{}' is ready.", name)
+                }
+                None => note!("[Vakt-Init] Ignoring readiness from an unknown sender."),
             }
         }
     }
