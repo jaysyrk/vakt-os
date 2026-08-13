@@ -9,6 +9,9 @@
 #
 #   ./build-system/wifitest.sh <vmlinuz> <initramfs> <disk.img>
 #
+# MODE=wpa2|wpa3 picks the access point's security. DHCP=off starts no DHCP
+# server, to exercise the associated-but-no-lease path.
+#
 # NEEDS A KERNEL BUILT WITH CONFIG_MAC80211_HWSIM=y, which the shipped
 # kernel.config deliberately does not set - an appliance has no use for fake
 # radios. Build one for testing without disturbing the seed:
@@ -85,7 +88,11 @@ echo "[+] Building an access point on wlan1..."
     echo 'ip addr add 10.9.0.1/24 dev wlan1'
     echo 'printf "start 10.9.0.100\nend 10.9.0.200\ninterface wlan1\nopt subnet 255.255.255.0\nopt router 10.9.0.1\nlease_file /run/udhcpd.leases\npidfile /run/udhcpd.pid\n" > /run/udhcpd.conf'
     echo 'touch /run/udhcpd.leases'
-    echo 'udhcpd /run/udhcpd.conf'
+    if [ "${DHCP:-on}" = "on" ]; then
+        echo 'udhcpd /run/udhcpd.conf'
+    else
+        echo 'printf "no DHCP server started\n"'
+    fi
     echo 'sleep 2'
     echo 'printf "MARK%s\n" _AP_UP'
     echo 'iw dev wlan1 info 2>/dev/null || ip addr show wlan1'
