@@ -15,6 +15,9 @@ const WPA_PID: &str = "/run/wpa_supplicant.pid";
 
 /// How long association and the WPA handshake get before it counts as failed.
 const ASSOC_TIMEOUT: Duration = Duration::from_secs(20);
+/// How long to watch for an address after udhcpc starts. It keeps retrying in
+/// the background, so a lease can arrive well after it has forked away.
+const DHCP_TIMEOUT: Duration = Duration::from_secs(15);
 /// Poll interval for noticing that the TUI rewrote the config.
 const POLL: Duration = Duration::from_secs(1);
 /// Retry backoff bounds after a failed connection attempt.
@@ -224,8 +227,33 @@ fn connect(cfg: &NetConfig) -> Result<String, String> {
 
     request_lease(&cfg.interface)?;
 
-    interface_address(&cfg.interface)
-        .ok_or_else(|| format!("no address assigned to {}", cfg.interface))
+    // udhcpc's exit status says nothing: -b makes it fork into the background
+    // and exit 0 the moment the first attempt fails, so it reports success for
+    // a network that never answered. The address is the only evidence, and it
+    // can arrive after udhcpc has already forked away.
+    poll(DHCP_TIMEOUT, || interface_address(&cfg.interface)).ok_or_else(|| {
+        format!(
+            "no DHCP lease on {} within {}s; the network answered no address request",
+            cfg.interface,
+            DHCP_TIMEOUT.as_secs()
+        )
+    })
+}
+
+/// Calls `f` until it yields a value or `timeout` elapses.
+fn poll<T>(timeout: Duration, mut f: impl FnMut() -> Option<T>) -> Option<T> {
+    let step = Duration::from_millis(500);
+    let mut waited = Duration::ZERO;
+    loop {
+        if let Some(value) = f() {
+            return Some(value);
+        }
+        if waited >= timeout {
+            return None;
+        }
+        std::thread::sleep(step);
+        waited += step;
+    }
 }
 
 /// Runs udhcpc, which daemonizes after obtaining a lease and handles renewals.
@@ -239,10 +267,12 @@ fn request_lease(interface: &str) -> Result<(), String> {
         .status()
         .map_err(|e| format!("udhcpc unavailable: {}", e))?;
 
+    // Only a failure to launch is reported here. A zero exit means udhcpc
+    // started, not that a lease exists - see the caller.
     if status.success() {
         Ok(())
     } else {
-        Err(format!("DHCP failed on {}", interface))
+        Err(format!("udhcpc could not start on {}", interface))
     }
 }
 
@@ -486,6 +516,31 @@ mod tests {
         assert_eq!(mode_of(&path), 0o600);
         assert_eq!(std::fs::read(&path).unwrap(), b"new");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// udhcpc forks away and keeps trying, so the address can appear well
+    /// after it exits - checking once is what made a working network report
+    /// "no address assigned".
+    #[test]
+    fn polling_waits_for_a_late_answer() {
+        let mut calls = 0;
+        let got = poll(Duration::from_secs(5), || {
+            calls += 1;
+            if calls >= 3 { Some("10.0.0.2") } else { None }
+        });
+        assert_eq!(got, Some("10.0.0.2"));
+        assert!(calls >= 3, "gave up before the value arrived");
+    }
+
+    #[test]
+    fn polling_gives_up_rather_than_hanging() {
+        let start = std::time::Instant::now();
+        let got: Option<()> = poll(Duration::from_millis(600), || None);
+        assert!(got.is_none());
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "poll overran its timeout"
+        );
     }
 
     /// Without key_mgmt, wpa_supplicant defaults to WPA-PSK and WPA-EAP, so a

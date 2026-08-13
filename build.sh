@@ -252,6 +252,10 @@ EOF
 # --- Networking stack --------------------------------------------------------
 echo "[+] Extracting the Wi-Fi stack..."
 copy_deps "$(command -v wpa_supplicant)" "$ROOTFS"
+# wpa_cli ships in the same package and is the only way to ask the card what it
+# can actually see. Without it, a mistyped SSID and a network that is out of
+# range are the same silent timeout - which cost a whole evening once.
+copy_deps "$(command -v wpa_cli)" "$ROOTFS"
 # wpa_passphrase is deliberately not shipped: vakt-net writes the supplicant
 # configuration itself, because there is no way to call wpa_passphrase that is
 # both safe (not via argv, which /proc publishes) and workable (not via stdin,

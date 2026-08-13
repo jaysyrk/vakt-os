@@ -8,40 +8,33 @@ being done yet.
 
 ## Blocking everything else
 
-**Wi-Fi on one real machine.** The code is no longer suspect; the appliance
-it was failing on was running a build that predated the fix.
+**Wi-Fi on one real machine.** Association works. DHCP is the open question.
 
-Verified against a virtual radio — `build-system/wifitest.sh`, which uses
-`mac80211_hwsim` to give the guest two 802.11 radios and turns one of them
-into a WPA2 access point:
+The long hunt ended somewhere unglamorous: the SSID had been typed into the
+panel with two letters transposed - `Stkyezone` for `Stykezone` - so the
+network being searched for did not exist. Everything before that (rfkill, the
+Landlock grant, the carrier wait, WPA3/SAE) was real and worth fixing, but none
+of it was the cause.
 
-```
-[vakt-net] Generating supplicant config for SSID 'VaktTest'.
-[vakt-net] Associated with 'VaktTest'.
-udhcpc: lease of 10.9.0.100 obtained from 10.9.0.1
-[vakt-net] Connected. Address 10.9.0.100 on wlan0.
-```
+With the name corrected it associates, and the failure moves to
+`no address assigned to wlan0`. That message was itself wrong: `udhcpc -b`
+forks into the background and exits 0 when the first attempt fails, so the exit
+status never meant what the code assumed. It now watches for the address for
+15s instead, and says so honestly when none arrives.
 
-That covers the supplicant configuration `vakt-net` now writes itself (the
-`wpa_passphrase` replacement, which had never associated with anything), the
-carrier wait before DHCP, and the config-change watcher switching a live
-daemon from wired to wireless — all under full Landlock enforcement, on a
-kernel where `rfkill` is registered. No `Cannot open RFKILL control device`.
-
-What that does **not** cover is any particular chipset. Remaining:
-
-- [ ] Rebuild and reflash — the failing appliance predates `50c6fbd`
-- [ ] `cat /run/vakt-net.status` reaches `connected` with an address
+- [ ] Confirm a lease arrives with the polling fix in
 - [ ] Reboot and confirm it reconnects with no prompting
-- [ ] Record the chipset in [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md) —
-      it decides which firmware the image must keep carrying, and it is the one
-      thing no amount of emulation can answer
+- [ ] Record the chipset in [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md)
 
-Ruled out while chasing this, so nobody re-treads them: a missing chipset
-driver (`phy0` was registered), the rfkill node appearing after the ruleset is
-sealed (`load_modules()` is synchronous and finishes before services start),
-and file permissions (`Service` carries no user field, so daemons run as
-PID 1 does).
+Ruled out along the way: a missing chipset driver (`phy0` is registered),
+rfkill (`soft` and `hard` both 0), the sandbox, WPA3 (the network is WPA2),
+and the band (channel 6, 2.4GHz).
+
+**The panel makes you type an SSID from memory, and that is the real defect
+here.** A typo and a network that is out of range produce the same silent
+timeout. `wpa_cli` now ships in the image, so the Wi-Fi page can offer the
+networks the card can actually see - that is the fix that makes this class of
+bug impossible, and it is not written yet.
 
 ---
 
