@@ -129,8 +129,13 @@ refute 'Kernel panic'                     "the kernel did not panic"
 check  'Root filesystem is read-only'     "the root was sealed"
 check  'Read-only file system'            "and writing to it really fails"
 check  'Panel will run as vakt'           "an unprivileged account was found"
-check  "Service 'vakt-ids' is ready"      "vakt-ids reported ready"
-check  "Service 'vakt-net' is ready"      "vakt-net reported ready"
+# Readiness is checked in /run/services.status, not on the console. Once the
+# panel or a shell owns the console, vakt-init sends its messages to the log
+# instead - so whether a daemon's "is ready" line reaches the console depends
+# on whether it beat the session, which is a race. vakt-ids is quick and
+# usually wins it; vakt-net does DHCP first and usually loses.
+check  'vakt-ids.*ready'                  "vakt-ids reported ready"
+check  'vakt-net.*ready'                  "vakt-net reported ready"
 check  'All services reported ready'      "boot did not time out waiting"
 check  'UNPRIV_EXEC_OK'                   "the unprivileged user can exec"
 refute 'Could not run'                    "nothing failed to launch"
