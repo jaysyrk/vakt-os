@@ -12,6 +12,9 @@ use std::time::{Duration, SystemTime};
 
 const WPA_CONF: &str = "/run/wpa_supplicant.conf";
 const WPA_PID: &str = "/run/wpa_supplicant.pid";
+/// What /etc/resolv.conf symlinks to; /etc is read-only after boot. udhcpc's
+/// script writes the same file on every lease.
+const RESOLV_CONF: &str = "/run/resolv.conf";
 
 /// How long association and the WPA handshake get before it counts as failed.
 const ASSOC_TIMEOUT: Duration = Duration::from_secs(20);
@@ -225,6 +228,10 @@ fn connect(cfg: &NetConfig) -> Result<String, String> {
         log!("Associated with '{}'.", ssid);
     }
 
+    if cfg.is_static() {
+        return configure_static(cfg);
+    }
+
     request_lease(&cfg.interface)?;
 
     // udhcpc's exit status says nothing: -b makes it fork into the background
@@ -236,6 +243,89 @@ fn connect(cfg: &NetConfig) -> Result<String, String> {
             "no DHCP lease on {} within {}s; the network answered no address request",
             cfg.interface,
             DHCP_TIMEOUT.as_secs()
+        )
+    })
+}
+
+/// Rejects an address with no prefix length before `ip` can accept it.
+///
+/// `ip addr replace 192.168.1.50 dev wlan0` succeeds and silently means /32,
+/// which puts no subnet on the link - so the gateway is then unreachable and
+/// the only error is `Nexthop has invalid gateway` from a step that is not the
+/// one at fault.
+fn checked_address(address: &str) -> Result<(), String> {
+    if address.contains('/') {
+        return Ok(());
+    }
+    Err(format!(
+        "'{}' needs a prefix length, like {}/24; without one the kernel assumes \
+         a single address and the gateway cannot be reached",
+        address, address
+    ))
+}
+
+/// Applies a hand-configured address, for a network with no DHCP server - or
+/// one whose server does not answer.
+///
+/// `replace` throughout, so reconnecting to the same network is idempotent and
+/// a second interface can still take the default route.
+fn configure_static(cfg: &NetConfig) -> Result<String, String> {
+    let address = cfg.address.as_deref().unwrap_or_default();
+    checked_address(address)?;
+    log!("Configuring {} statically as {}.", cfg.interface, address);
+
+    let ok = Command::new("ip")
+        .args(["addr", "replace", address, "dev", &cfg.interface])
+        .status()
+        .map_err(|e| format!("ip unavailable: {}", e))?;
+    if !ok.success() {
+        return Err(format!(
+            "'{}' was refused as an address for {}",
+            address, cfg.interface
+        ));
+    }
+
+    if let Some(gateway) = cfg.gateway.as_deref().filter(|g| !g.is_empty()) {
+        let routed = Command::new("ip")
+            .args([
+                "route",
+                "replace",
+                "default",
+                "via",
+                gateway,
+                "dev",
+                &cfg.interface,
+            ])
+            .status()
+            .map_err(|e| format!("ip unavailable: {}", e))?;
+        if !routed.success() {
+            return Err(format!(
+                "the address was set, but '{}' was refused as a gateway; nothing \
+                 beyond this network will be reachable",
+                gateway
+            ));
+        }
+    }
+
+    if !cfg.dns.is_empty() {
+        let resolv: String = cfg
+            .dns
+            .iter()
+            .map(|s| format!("nameserver {}\n", s))
+            .collect();
+        if let Err(e) = std::fs::write(RESOLV_CONF, resolv) {
+            log!(
+                "Could not write {}: {}. Names will not resolve.",
+                RESOLV_CONF,
+                e
+            );
+        }
+    }
+
+    interface_address(&cfg.interface).ok_or_else(|| {
+        format!(
+            "set {} on {}, but the kernel reports no address there",
+            address, cfg.interface
         )
     })
 }
@@ -516,6 +606,18 @@ mod tests {
         assert_eq!(mode_of(&path), 0o600);
         assert_eq!(std::fs::read(&path).unwrap(), b"new");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ip accepts a bare address as /32 and the failure then surfaces two
+    /// steps later as "Nexthop has invalid gateway", blaming the gateway for
+    /// the address's mistake.
+    #[test]
+    fn an_address_without_a_prefix_is_refused_here() {
+        let err = checked_address("192.168.1.50").unwrap_err();
+        assert!(err.contains("prefix length"), "{}", err);
+        assert!(err.contains("192.168.1.50/24"), "{}", err);
+        assert!(checked_address("192.168.1.50/24").is_ok());
+        assert!(checked_address("10.0.0.5/8").is_ok());
     }
 
     /// udhcpc forks away and keeps trying, so the address can appear well

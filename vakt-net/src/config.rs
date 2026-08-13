@@ -12,6 +12,13 @@ pub struct NetConfig {
     pub ssid: Option<String>,
     pub psk: Option<String>,
     pub interface: String,
+    /// A static address as `10.0.0.5/24`. Set means DHCP is skipped entirely -
+    /// an appliance on a network with no DHCP server, or one whose server
+    /// cannot be trusted to answer, still needs a route online.
+    pub address: Option<String>,
+    pub gateway: Option<String>,
+    /// Resolvers for the static case, since no lease will supply them.
+    pub dns: Vec<String>,
 }
 
 impl Default for NetConfig {
@@ -22,6 +29,9 @@ impl Default for NetConfig {
             ssid: None,
             psk: None,
             interface: "eth0".to_string(),
+            address: None,
+            gateway: None,
+            dns: Vec::new(),
         }
     }
 }
@@ -29,6 +39,11 @@ impl Default for NetConfig {
 impl NetConfig {
     pub fn is_wireless(&self) -> bool {
         self.ssid.as_ref().is_some_and(|s| !s.is_empty())
+    }
+
+    /// Whether an address was configured by hand rather than left to DHCP.
+    pub fn is_static(&self) -> bool {
+        self.address.as_ref().is_some_and(|a| !a.is_empty())
     }
 
     /// Parses `key=value` lines. `#` starts a comment; unknown keys are ignored.
@@ -55,6 +70,16 @@ impl NetConfig {
                 "interface" | "iface" if !value.is_empty() => {
                     cfg.interface = value;
                     saw_interface = true;
+                }
+                "address" | "ip" if !value.is_empty() => cfg.address = Some(value),
+                "gateway" | "router" if !value.is_empty() => cfg.gateway = Some(value),
+                "dns" | "nameserver" if !value.is_empty() => {
+                    cfg.dns = value
+                        .split([',', ' '])
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect();
                 }
                 _ => {}
             }
@@ -243,5 +268,35 @@ mod tests {
 
         assert_eq!(first_usable(&[&persistent, &fallback]), Some(persistent));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// An appliance on a network with no DHCP server, or one that does not
+    /// answer, still needs a route online.
+    #[test]
+    fn a_static_address_is_parsed_and_skips_dhcp() {
+        let cfg = NetConfig::parse(
+            "interface=eth0\naddress=192.168.1.50/24\ngateway=192.168.1.1\ndns=1.1.1.1, 9.9.9.9\n",
+        );
+        assert!(cfg.is_static());
+        assert_eq!(cfg.address.as_deref(), Some("192.168.1.50/24"));
+        assert_eq!(cfg.gateway.as_deref(), Some("192.168.1.1"));
+        assert_eq!(cfg.dns, vec!["1.1.1.1", "9.9.9.9"]);
+    }
+
+    /// Wi-Fi and a static address are not exclusive: associate, then configure
+    /// by hand rather than asking for a lease.
+    #[test]
+    fn wireless_can_also_be_static() {
+        let cfg = NetConfig::parse("ssid=Net\npsk=password123\naddress=10.0.0.5/24\n");
+        assert!(cfg.is_wireless());
+        assert!(cfg.is_static());
+        assert_eq!(cfg.interface, "wlan0");
+    }
+
+    #[test]
+    fn no_address_means_dhcp() {
+        let cfg = NetConfig::parse("interface=eth0\n");
+        assert!(!cfg.is_static());
+        assert!(cfg.dns.is_empty());
     }
 }

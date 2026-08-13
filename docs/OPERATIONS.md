@@ -224,10 +224,39 @@ sudo e2label /dev/sdX VAKTDATA
    panel, because it needs credentials.
 3. **Wi-Fi needs `VAKT_KERNEL=host`.** The `custom` kernel ships no chipset
    firmware, on purpose.
-3. More detail:
+4. More detail:
    ```bash
    cat /run/vakt-net.log        # wpa_supplicant / udhcpc output
+   wpa_cli -i wlan0 scan_results   # what the card can actually see
+   wpa_cli -i wlan0 status         # which network it actually joined
    ```
+   `scan_results` is the one that settles a mistyped SSID. A name that is
+   wrong by one character and a network that is out of range produce the same
+   silent timeout, and only the scan tells them apart.
+
+5. **Associated but no address?** The status will say so in those words. That
+   means the Wi-Fi worked and the DHCP server did not answer. Give it a
+   static address instead — see below.
+
+### Static addressing
+
+For a network with no DHCP server, or one that will not answer. Add to
+`/persistent/etc/vakt-net.conf`:
+
+```ini
+interface=wlan0
+ssid=YourNetwork
+psk=your-password
+address=192.168.1.50/24
+gateway=192.168.1.1
+dns=1.1.1.1, 9.9.9.9
+```
+
+`address` needs the prefix length. Setting it skips DHCP entirely; Wi-Fi
+association still happens exactly as before. `vakt-net` notices the file
+changing and reconnects within a second, so there is no need to reboot.
+
+Leave `address` out to go back to DHCP.
 
 ---
 
