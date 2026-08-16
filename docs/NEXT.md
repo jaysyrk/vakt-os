@@ -30,11 +30,12 @@ Ruled out along the way: a missing chipset driver (`phy0` is registered),
 rfkill (`soft` and `hard` both 0), the sandbox, WPA3 (the network is WPA2),
 and the band (channel 6, 2.4GHz).
 
-**The panel makes you type an SSID from memory, and that is the real defect
-here.** A typo and a network that is out of range produce the same silent
-timeout. `wpa_cli` now ships in the image, so the Wi-Fi page can offer the
-networks the card can actually see - that is the fix that makes this class of
-bug impossible, and it is not written yet.
+**The panel used to make you type an SSID from memory, and that was the real
+defect here** — a typo and a network out of range produced the same silent
+timeout. Both halves now exist: `vakt-net` asks the supplicant for a scan and
+writes `/run/vakt-net.scan`, and the panel's Wi-Fi page is a picker over that
+list. Neither half has met a real radio yet; under QEMU there is nothing to
+scan, so what is confirmed is the parsing and the empty case.
 
 ---
 
@@ -74,26 +75,24 @@ from untestable to at least observable on the appliance.
 
 ---
 
-## Open: a stray fragment on the Dashboard page
+## Fixed: a stray fragment on the Dashboard page
 
-A screenshot of the panel shows `t done` immediately after the dashboard's
-last line. It is reproducible, always in the same place, and only on the
-Dashboard — Services, Network and Intrusion Detection are clean in the same
-session.
+A screenshot of the panel showed `t done` after the dashboard's last line,
+reproducible and always in the same place. Everything above was ruled out
+empirically and correctly: the panel never emits the string, it is in no
+binary and no source file, and `dmesg` does not contain it.
 
-Ruled out, each empirically:
+What that list got wrong was the last entry. It *is* console residue — the
+clearing test only proved the text arrives after the clear, not that it comes
+from somewhere else. Something writes to `/dev/console` once the panel has
+already painted, and tcell repaints only cells whose contents it believes have
+changed, so those cells survive every redraw.
 
-- **The panel does not emit it.** Driven over a serial console, the string
-  `done` appears nowhere in its entire output.
-- **It is not in the binary.** `strings` on the built `vakt-panel` shows the
-  dashboard text ending at `...at any time.`
-- **It is not in any source**, in any language, anywhere in the tree.
-- **It is not the kernel.** `dmesg | grep -i done` is empty.
-- **It is not boot-log residue showing through.** Clearing the console before
-  the panel starts does not remove it, and the other pages would show it too.
-
-Worth someone with fresh eyes. It is cosmetic, but it is in the first
-screenshot anybody sees.
+The screenshots that settled it caught the same fragment on the Wi-Fi page as
+well, at the same screen position on a page with entirely different content:
+it was never tied to the dashboard, only to the cells nothing happened to
+paint over. `app.Sync()` on the refresh tick repaints every cell from tcell's
+own buffer, and the fragment is gone from a rebuilt image.
 
 ---
 
@@ -128,7 +127,8 @@ unchanged.
       screen, the right PIN unlocks and a wrong one does not. This found the
       durability bug fixed alongside it. Never yet done on real hardware.
 - [ ] Release notes: what works, what does not, which machine it was tested on
-- [ ] Screenshots of the panel and a real boot
+- [x] Screenshots of the panel and a real boot — `docs/screenshots`,
+      regenerated from a QEMU boot after the panel was rebuilt
 - [ ] Tag, and let CI publish the ISO
 
 Do not tag while anything above is open. A first release that cannot install a

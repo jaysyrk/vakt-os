@@ -64,6 +64,19 @@ rootfs, a Rust PID 1, and the tools in this repo.
 The whole appliance is driven from one console panel. No display server, no
 mouse, 80x25.
 
+The **dashboard** is the first thing you see after unlocking: link state,
+uptime, whether the root filesystem is still read-only, every supervised
+daemon, and anything the integrity monitor has flagged. One key reaches each
+page, and the header carries the state with you:
+
+![The dashboard, showing network state, system state, services and integrity findings side by side](docs/screenshots/dashboard.png)
+
+Wi-Fi is a picker rather than a text box — networks come out of a list with
+their signal strength and band, so a mistyped SSID stops being a way to fail.
+There is no screenshot of it here because the shipped kernel carries no
+wireless drivers at all (see `VAKT_KERNEL` in `build.sh`), so under QEMU it
+correctly reports an empty sky.
+
 **Intrusion detection**, live. Here it has caught a real change to the
 persistent disk — the PIN file being written seconds earlier:
 

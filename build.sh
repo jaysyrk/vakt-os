@@ -464,8 +464,18 @@ menuentry "Vakt OS (update slot B)" {
 EOF
 
 echo "[+] Running grub-mkrescue..."
-grub-mkrescue -o "$OUT_ISO" "$ISO_DIR" 2>/dev/null
+grub-mkrescue -o "$OUT_ISO" "$ISO_DIR"
 chown "${SUDO_USER:-root}:${SUDO_USER:-root}" "$OUT_ISO" 2>/dev/null || true
+
+# Without its platform modules installed, grub-mkrescue writes an ISO with no
+# El Torito boot record and still exits 0 - a build that looks finished and
+# produces a disc no machine will boot. Cheaper to catch here than in a VM.
+if ! xorriso -indev "$OUT_ISO" -report_el_torito plain 2>/dev/null | grep -q "El Torito catalog"; then
+    echo "[!] $OUT_ISO has no boot record and will not boot."
+    echo "    grub-mkrescue needs its BIOS and EFI modules: on Arch that is the"
+    echo "    grub package, on Debian grub-pc-bin and grub-efi-amd64-bin."
+    exit 1
+fi
 
 echo ""
 echo "========================================"
