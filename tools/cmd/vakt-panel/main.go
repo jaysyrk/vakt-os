@@ -222,6 +222,10 @@ func main() {
 	go func() {
 		for range time.Tick(tick) {
 			name, _ := ui.pages.GetFrontPage()
+			// Boot messages printed to the console after the panel first drew
+			// sit in cells tcell believes it already owns, so they survive
+			// every redraw. Sync repaints all of them.
+			app.Sync()
 			app.QueueUpdateDraw(func() {
 				ui.setStatus()
 				switch name {

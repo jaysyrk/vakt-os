@@ -140,18 +140,20 @@ func wifiPage(app *tview.Application) (tview.Primitive, tview.Primitive, func())
 		found = readScan()
 		table.Clear()
 
+		if len(found) == 0 {
+			// Column headings over nothing read as an empty table with a
+			// stray sentence in it.
+			table.SetCell(0, 0, tview.NewTableCell("no networks in range").
+				SetTextColor(dimColor).
+				SetSelectable(false))
+			return
+		}
+
 		header := []string{"", "network", "band", "security"}
 		for col, text := range header {
 			table.SetCell(0, col, tview.NewTableCell(text).
 				SetTextColor(dimColor).
 				SetSelectable(false))
-		}
-
-		if len(found) == 0 {
-			table.SetCell(1, 1, tview.NewTableCell("no networks in range").
-				SetTextColor(dimColor).
-				SetSelectable(false))
-			return
 		}
 		for i, n := range found {
 			table.SetCell(i+1, 0, tview.NewTableCell(n.bars()).SetTextColor(accentColor))
