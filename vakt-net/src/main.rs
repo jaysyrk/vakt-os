@@ -2,6 +2,7 @@ mod config;
 mod link;
 mod notify;
 mod sandbox;
+mod scan;
 mod status;
 
 use config::NetConfig;
@@ -96,6 +97,12 @@ fn main() {
                         ),
                     });
                     log!("No configuration and no cable; waiting for either.");
+                    // Nothing to connect to, but the panel's picker still needs
+                    // a list - this is exactly the first-boot case.
+                    if let Some(iface) = link::first_wireless_link() {
+                        start_scanner(&iface);
+                        refresh_scan(&iface);
+                    }
                     announce(&mut announced, "no network configured");
                     // Bounded, unlike the old wait: plugging a cable into an
                     // unconfigured appliance changes no file, so there would
@@ -155,12 +162,38 @@ fn main() {
                 // A network that will not come up is still a settled answer;
                 // boot should carry on and let the panel show the failure.
                 announce(&mut announced, &format!("connection failed: {}", e));
+                if cfg.is_wireless() {
+                    refresh_scan(&cfg.interface);
+                }
                 // A config edit should cut the backoff short.
                 wait_for_config_change(stamp, Some(backoff));
                 backoff = (backoff * 2).min(BACKOFF_MAX);
             }
         }
     }
+}
+
+/// Publishes what is in range, for the panel's picker. A scan that fails costs
+/// the picker a refresh and nothing else.
+fn refresh_scan(interface: &str) {
+    match scan::refresh(interface) {
+        Ok(count) => log!("Scan found {} network(s) on {}.", count, interface),
+        Err(e) => log!("Could not scan on {}: {}", interface, e),
+    }
+}
+
+/// Starts a supplicant with no network block, purely so there is something to
+/// ask for a scan on an appliance that has never been configured.
+fn start_scanner(interface: &str) {
+    if Path::new(WPA_PID).exists() {
+        return;
+    }
+    if write_private(Path::new(WPA_CONF), scan::scanner_config().as_bytes()).is_err() {
+        return;
+    }
+    let _ = Command::new("wpa_supplicant")
+        .args(["-B", "-i", interface, "-c", WPA_CONF, "-P", WPA_PID])
+        .status();
 }
 
 /// Reports readiness to vakt-init the first time, and refreshes the status line
@@ -489,8 +522,11 @@ fn supplicant_config(ssid: &str, psk: &str, wpa3: bool) -> Result<String, String
     };
 
     Ok(format!(
-        "network={{\n\tssid=\"{}\"\n{}{}}}\n",
-        ssid, psk_line, extras
+        "{}network={{\n\tssid=\"{}\"\n{}{}}}\n",
+        scan::scanner_config(),
+        ssid,
+        psk_line,
+        extras
     ))
 }
 
@@ -668,8 +704,25 @@ mod tests {
         let conf = supplicant_config("Net", "password123", false).unwrap();
         assert_eq!(
             conf,
-            "network={\n\tssid=\"Net\"\n\tpsk=\"password123\"\n}\n"
+            format!(
+                "{}network={{\n\tssid=\"Net\"\n\tpsk=\"password123\"\n}}\n",
+                scan::scanner_config()
+            )
         );
+    }
+
+    /// Without a control interface there is no way to ask the running
+    /// supplicant for a scan, and the panel's picker has nothing to list.
+    #[test]
+    fn every_config_carries_a_control_interface() {
+        for wpa3 in [true, false] {
+            let conf = supplicant_config("Net", "password123", wpa3).unwrap();
+            assert!(
+                conf.starts_with(&format!("ctrl_interface={}", scan::CTRL_DIR)),
+                "{}",
+                conf
+            );
+        }
     }
 
     /// The passphrase must reach wpa_supplicant without ever being an
@@ -678,9 +731,12 @@ mod tests {
     #[test]
     fn a_passphrase_is_written_quoted_for_wpa_supplicant_to_derive() {
         let conf = supplicant_config("Example_Network", "correcthorsebattery", false).unwrap();
-        assert_eq!(
-            conf,
-            "network={\n\tssid=\"Example_Network\"\n\tpsk=\"correcthorsebattery\"\n}\n"
+        assert!(
+            conf.ends_with(
+                "network={\n\tssid=\"Example_Network\"\n\tpsk=\"correcthorsebattery\"\n}\n"
+            ),
+            "{}",
+            conf
         );
     }
 

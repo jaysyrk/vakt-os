@@ -96,6 +96,36 @@ pub fn first_wired_link() -> Option<String> {
     candidates.into_iter().find(|i| has_carrier_in(root, i))
 }
 
+/// Interfaces backed by an 802.11 radio, in a stable order.
+pub fn wireless_candidates_in(root: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+
+    let mut names: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .filter(|entry| {
+            let path = entry.path();
+            path.join("wireless").exists() || path.join("phy80211").exists()
+        })
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect();
+
+    names.sort();
+    names
+}
+
+/// The first wireless interface, brought up so it can be scanned with.
+pub fn first_wireless_link() -> Option<String> {
+    let iface = wireless_candidates_in(Path::new(SYS_NET))
+        .into_iter()
+        .next()?;
+    let _ = Command::new("ip")
+        .args(["link", "set", &iface, "up"])
+        .status();
+    Some(iface)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
