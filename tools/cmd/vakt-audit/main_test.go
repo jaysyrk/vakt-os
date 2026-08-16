@@ -55,6 +55,11 @@ func TestCheckRootUIDsFailsOnAMissingFile(t *testing.T) {
 }
 
 func TestCheckShadowPermissionsPassesWhenRestricted(t *testing.T) {
+	// The check wants uid 0, and only a root run can produce a fixture it
+	// owns. Skipping beats failing every contributor's test run.
+	if os.Geteuid() != 0 {
+		t.Skip("needs root: the fixture has to be owned by uid 0")
+	}
 	path := filepath.Join(t.TempDir(), "shadow")
 	if err := os.WriteFile(path, []byte("root:*:19000:0:99999:7:::\n"), 0600); err != nil {
 		t.Fatal(err)
