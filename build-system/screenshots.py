@@ -11,6 +11,10 @@ are screenshots of the VGA console rather than photographs of a monitor, and
   setup  a fresh data disk: set a PIN, then every page
   lock   a disk that already has a PIN
 
+Page shots are named after the page, so docs/screenshots keeps stable names
+across runs. The Wi-Fi picker lists whatever vakt-net last scanned, so under a
+kernel with no wireless driver it is legitimately empty.
+
 Needs qemu-system-x86_64 and pnmtopng (netpbm). Regenerate docs/screenshots
 with this after any change to the panel's layout.
 """
@@ -110,16 +114,16 @@ else:
     time.sleep(70)
     if plan == "setup":
         # Fresh disk: the setup screen wants the PIN twice.
-        shot("10-setup")
+        shot("first-boot")
         typ("8317\t8317\r")
     else:
-        shot("10-lock")
+        shot("lock")
         typ("8317\r")
     time.sleep(8)
-    shot("11-menu")
-    for key, name in [("n", "12-network"), ("i", "13-ids"),
-                      ("s", "14-audit"), ("p", "15-packages"),
-                      ("l", "16-panel-lock"), ("v", "17-services")]:
+    shot("dashboard")
+    for key, name in [("w", "wifi"), ("n", "network"),
+                      ("i", "intrusion-detection"), ("v", "services"),
+                      ("p", "packages"), ("l", "panel-lock")]:
         cmd("send-key", keys=[{"type": "qcode", "data": key}])
         time.sleep(6)
         shot(name)
