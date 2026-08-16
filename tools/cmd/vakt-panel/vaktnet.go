@@ -16,8 +16,7 @@ const (
 	idsAlerts         = "/run/vakt-ids.alerts"
 )
 
-// netConfPath returns the persistent config location when the disk is mounted,
-// so credentials survive a reboot, and the RAM-only path otherwise.
+// The persistent path when the disk is mounted, the RAM-only one otherwise.
 func netConfPath() string {
 	if info, err := os.Stat("/persistent"); err == nil && info.IsDir() {
 		return persistentNetConf
@@ -25,8 +24,7 @@ func netConfPath() string {
 	return fallbackNetConf
 }
 
-// writeNetConfig saves Wi-Fi credentials. vakt-net polls this file's mtime and
-// reconnects on its own once it changes, so there is no daemon to signal.
+// vakt-net polls this file's mtime, so there is no daemon to signal.
 func writeNetConfig(ssid, psk, iface string) (string, error) {
 	path := netConfPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -40,16 +38,11 @@ func writeNetConfig(ssid, psk, iface string) (string, error) {
 	b.WriteString(fmt.Sprintf("interface=%s\n", iface))
 
 	// In place, not temp-then-rename: Landlock rules are keyed on the inode
-	// that existed when vakt-net locked its ruleset, so a rename would put an
-	// inode there that the daemon cannot reach. vakt-init pre-creates this file
-	// owned by the panel's user so the truncating write succeeds.
-	//
-	// The PSK is in here, so root only.
+	// vakt-net locked, and a rename would leave one it cannot reach.
 	return path, durable.WriteInPlace(path, []byte(b.String()), 0600)
 }
 
-// readNetConfig loads the saved SSID and interface. The PSK is deliberately
-// not returned - the form should not redisplay a stored password.
+// The PSK is deliberately not returned; the form must not redisplay it.
 func readNetConfig() (ssid, iface string) {
 	iface = "wlan0"
 	data, err := os.ReadFile(netConfPath())
@@ -94,29 +87,29 @@ func netStatusReport() string { return netStatusReportFrom(netStatusFile) }
 func netStatusReportFrom(path string) string {
 	status := readKeyValueFile(path)
 	if len(status) == 0 {
-		return "[yellow]vakt-net has not reported yet.[-]\n" +
-			"The daemon writes " + path + " once it starts.\n"
+		return " " + warn + "vakt-net has not reported yet." + off + "\n" +
+			" " + dim + "The daemon writes " + path + " once it starts." + off + "\n"
 	}
 
-	color := "yellow"
+	colour := warn
 	switch status["state"] {
 	case "connected":
-		color = "green"
+		colour = ok
 	case "failed", "unconfigured":
-		color = "red"
+		colour = bad
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "State:     [%s]%s[-]\n", color, status["state"])
-	fmt.Fprintf(&b, "Interface: %s\n", status["interface"])
-	if ssid := status["ssid"]; ssid != "" {
-		fmt.Fprintf(&b, "SSID:      %s\n", ssid)
-	}
-	if ip := status["ip"]; ip != "" {
-		fmt.Fprintf(&b, "Address:   [green]%s[-]\n", ip)
-	}
-	if detail := status["detail"]; detail != "" {
-		fmt.Fprintf(&b, "Detail:    %s\n", detail)
+	fmt.Fprintf(&b, "  %s%s%s%s%s%s\n", dim, pad("state", 11), off, colour, status["state"], off)
+	for _, field := range []struct{ label, key string }{
+		{"interface", "interface"},
+		{"ssid", "ssid"},
+		{"address", "ip"},
+		{"detail", "detail"},
+	} {
+		if value := status[field.key]; value != "" {
+			b.WriteString(row(field.label, value, 11) + "\n")
+		}
 	}
 	return b.String()
 }
@@ -126,12 +119,13 @@ func servicesReport() string { return servicesReportFrom(servicesStatus) }
 func servicesReportFrom(path string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "[yellow]No service report yet.[-]\n" +
-			"vakt-init writes " + path + " once the supervisor starts.\n"
+		return " " + warn + "No service report yet." + off + "\n" +
+			" " + dim + "vakt-init writes " + path + " once the supervisor starts." + off + "\n"
 	}
 
 	var b strings.Builder
-	b.WriteString("[::b]SERVICE          STATE      PID     RST  READY[-]\n\n")
+	fmt.Fprintf(&b, "  %s%s%s%s%s%s\n\n", dim,
+		pad("service", 17), pad("state", 11), pad("pid", 8), pad("rst", 5), "ready"+off)
 	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
 		if line == "" {
 			continue
@@ -145,29 +139,32 @@ func servicesReportFrom(path string) string {
 		name, state, pid, restarts := fields[0], fields[1], fields[2], fields[3]
 		readiness, detail := fields[4], fields[5]
 
-		color := "yellow"
+		colour := warn
 		switch state {
 		case "running":
-			color = "green"
+			colour = ok
 		case "failed":
-			color = "red"
+			colour = bad
 		}
 		if pid == "" {
 			pid = "-"
 		}
 
-		readyColor := "gray"
+		readyColour := dim
 		switch readiness {
 		case "ready":
-			readyColor = "green"
+			readyColour = ok
 		case "waiting":
-			readyColor = "yellow"
+			readyColour = warn
 		}
 
-		fmt.Fprintf(&b, "%-16s [%s]%-10s[-] %-7s %-4s [%s]%s[-]\n",
-			name, color, state, pid, restarts, readyColor, readiness)
+		fmt.Fprintf(&b, "  %s%s%s%s%s%s%s%s%s%s%s\n",
+			plain, pad(name, 17), off,
+			colour, pad(state, 11), off,
+			plain, pad(pid, 8)+pad(restarts, 5), off,
+			readyColour, readiness+off)
 		if detail != "" {
-			fmt.Fprintf(&b, "  [gray]%s[-]\n", detail)
+			fmt.Fprintf(&b, "  %s%s%s\n", dim, "  "+detail, off)
 		}
 	}
 	return b.String()
@@ -178,21 +175,17 @@ func idsReport(limit int) string { return idsReportFrom(idsAlerts, limit) }
 func idsReportFrom(path string, limit int) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// Only a missing file means "nothing reported". Any other error means
-		// this page cannot tell, and saying so in green would be an all-clear
-		// over findings it simply cannot see.
+		// Only a missing file means "nothing reported".
 		if !os.IsNotExist(err) {
-			return "[red]Cannot read " + path + ": " + err.Error() + "[-]\n\n" +
-				"This is not an all-clear. vakt-ids may be recording findings\n" +
-				"this page cannot see. Check the file from a root shell.\n"
+			return "  " + bad + "Cannot read " + path + ": " + err.Error() + off + "\n\n" +
+				"  " + plain + "This is not an all-clear. vakt-ids may be recording findings\n" +
+				"  this page cannot see. Check the file from a root shell." + off + "\n"
 		}
-		return "[green]No alerts recorded.[-]\n" +
-			"vakt-ids writes findings to " + path + ".\n"
+		return noAlerts(path)
 	}
 
 	if len(strings.TrimSpace(string(data))) == 0 {
-		return "[green]No alerts recorded.[-]\n" +
-			"vakt-ids writes findings to " + path + ".\n"
+		return noAlerts(path)
 	}
 
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
@@ -201,20 +194,26 @@ func idsReportFrom(path string, limit int) string {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "[::b]Most recent %d alert(s):[-]\n\n", len(lines))
+	fmt.Fprintf(&b, "  %sMost recent %d alert(s)%s\n\n", dim, len(lines), off)
 	for _, line := range lines {
 		fields := strings.SplitN(line, "\t", 3)
 		if len(fields) < 3 {
-			b.WriteString(line + "\n")
+			b.WriteString("  " + line + "\n")
 			continue
 		}
 		timestamp, kind, detail := fields[0], fields[1], fields[2]
 
-		color := "red"
+		colour := bad
 		if kind == "INFO" {
-			color = "gray"
+			colour = dim
 		}
-		fmt.Fprintf(&b, "[gray]%s[-] [%s]%-12s[-] %s\n", timestamp, color, kind, detail)
+		fmt.Fprintf(&b, "  %s%s%s %s%s%s %s%s%s\n",
+			dim, timestamp, off, colour, pad(kind, 12), off, plain, detail, off)
 	}
 	return b.String()
+}
+
+func noAlerts(path string) string {
+	return "  " + ok + "No alerts recorded." + off + "\n" +
+		"  " + dim + "vakt-ids writes findings to " + path + "." + off + "\n"
 }

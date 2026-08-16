@@ -7,13 +7,9 @@ import (
 	"github.com/rivo/tview"
 )
 
-// authGateRoot returns what vakt-panel shows first: a PIN prompt when one is
-// configured, a setup screen when it is not. Either path ends in unlock, which
-// swaps the application's root for the real panel.
-//
-// onUnlock runs before the swap. Arming the global Esc handler any earlier
-// targets a primitive absent from the lock screen's tree, which leaves nothing
-// focused and the form deaf to the keyboard for the rest of the session.
+// What the panel shows first. onUnlock must run before the root swap: arming
+// the Esc handler earlier targets a primitive the lock screen does not contain,
+// leaving the form deaf to the keyboard.
 func authGateRoot(app *tview.Application, mainLayout, focusAfter tview.Primitive, onUnlock func()) tview.Primitive {
 	unlock := func() {
 		onUnlock()
@@ -23,18 +19,12 @@ func authGateRoot(app *tview.Application, mainLayout, focusAfter tview.Primitive
 	if hasPIN() {
 		return lockScreen(unlock)
 	}
-	// A damaged auth file reaches setup too (see hasPINAt), so say which
-	// situation this is. Silently showing first-boot setup on an appliance
-	// that had a PIN yesterday would be its own kind of alarming.
+	// A damaged auth file reaches setup too (see hasPINAt), so say which it is.
 	return setupScreen(unlock, pinDamaged())
 }
 
-// submitOnEnter makes Enter inside a form's input fields run submit.
-//
-// tview's Form treats Enter as "move to the next element", so without this a
-// PIN form swallows it: focus shifts to the button and nothing happens, and a
-// correct PIN looks broken. The capture goes on the fields, not the form -
-// the focused field is what the application hands the event to.
+// tview's Form treats Enter as "move to the next element", so a correct PIN
+// entered and submitted looks broken. The capture belongs on the fields.
 func submitOnEnter(form *tview.Form, submit func()) {
 	for i := 0; i < form.GetFormItemCount(); i++ {
 		input, ok := form.GetFormItem(i).(*tview.InputField)
@@ -53,18 +43,21 @@ func submitOnEnter(form *tview.Form, submit func()) {
 
 func gateFrame(inner tview.Primitive, innerHeight int) tview.Primitive {
 	banner := tview.NewTextView().
-		SetTextAlign(tview.AlignCenter).
-		SetTextColor(tcell.ColorRed).
-		SetText(" VAKT OS SECURITY APPLIANCE ")
+		SetDynamicColors(true).
+		SetText(" " + accent + "[::b]VAKT OS" + off + "  " + dim + "security appliance" + off)
 
-	return tview.NewFlex().SetDirection(tview.FlexRow).
+	rows := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(banner, 1, 0, false).
+		AddItem(rule(), 1, 0, false).
+		AddItem(tview.NewBox(), 1, 0, false).
 		AddItem(inner, innerHeight, 1, true).
 		AddItem(tview.NewBox(), 0, 1, false)
+
+	return tview.NewFlex().
+		AddItem(tview.NewBox(), 2, 0, false).
+		AddItem(rows, 0, 1, true)
 }
 
-// lockScreen asks for the PIN already on file. It never leaves without a
-// correct answer - there is no "skip" here, unlike setup.
 func lockScreen(unlock func()) tview.Primitive {
 	result := tview.NewTextView().SetDynamicColors(true)
 	attempts := 0
@@ -80,32 +73,33 @@ func lockScreen(unlock func()) tview.Primitive {
 		}
 		attempts++
 		form.GetFormItemByLabel("PIN").(*tview.InputField).SetText("")
-		result.SetText(fmt.Sprintf("[red]Incorrect PIN. (%d attempt(s))[-]", attempts))
+		result.SetText(fmt.Sprintf("[#d75f5f]Incorrect PIN. (%d attempt(s))[-]", attempts))
 	}
 	form.AddButton("Unlock", attempt)
 	submitOnEnter(form, attempt)
-	form.SetBorder(true).SetTitle(" Locked ")
+	styleForm(form)
+
+	notice := tview.NewTextView().SetDynamicColors(true).
+		SetText(section("LOCKED") + "\n" + dim + "Enter the panel PIN to continue." + off)
 
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(notice, 3, 0, false).
 		AddItem(form, 6, 1, true).
 		AddItem(result, 1, 0, false)
-	return gateFrame(layout, 7)
+	return gateFrame(layout, 10)
 }
 
-// setupScreen runs once, the first time the panel ever starts: it offers to
-// set a PIN and explains what skipping it means, rather than silently
-// leaving the console open. A root recovery shell (vakt.rootshell on the
-// kernel command line) can always delete the stored PIN file if one set here
-// is later forgotten.
+// Shown once, on first start. A forgotten PIN is recoverable: vakt.rootshell on
+// the kernel command line can delete the stored file.
 func setupScreen(unlock func(), damaged bool) tview.Primitive {
 	result := tview.NewTextView().SetDynamicColors(true)
 
-	message := "[yellow]No PIN is set. Anyone with console access has full control\n" +
+	message := "[#d7af5f]No PIN is set. Anyone with console access has full control\n" +
 		"of this appliance - Wi-Fi credentials, installed packages, and\n" +
 		"shutdown. Set one now, or skip and set it later from the\n" +
 		"Panel Lock page.[-]"
 	if damaged {
-		message = "[red]The stored PIN could not be read. The file is there but this\n" +
+		message = "[#d75f5f]The stored PIN could not be read. The file is there but this\n" +
 			"panel cannot use it - unreadable, or not owned by this account -\n" +
 			"so no PIN would ever have unlocked it. Setting one now replaces\n" +
 			"it. Check ownership from a root shell first if you want the old\n" +
@@ -121,15 +115,15 @@ func setupScreen(unlock func(), damaged bool) tview.Primitive {
 		confirm := form.GetFormItemByLabel("Confirm PIN").(*tview.InputField).GetText()
 
 		if pin == "" {
-			result.SetText("[red]PIN cannot be empty.[-]")
+			result.SetText("[#d75f5f]PIN cannot be empty.[-]")
 			return
 		}
 		if pin != confirm {
-			result.SetText("[red]PIN and confirmation do not match.[-]")
+			result.SetText("[#d75f5f]PIN and confirmation do not match.[-]")
 			return
 		}
 		if err := setPIN(pin); err != nil {
-			result.SetText(fmt.Sprintf("[red]Could not save PIN: %v[-]", err))
+			result.SetText(fmt.Sprintf("[#d75f5f]Could not save PIN: %v[-]", err))
 			return
 		}
 		unlock()
@@ -138,7 +132,7 @@ func setupScreen(unlock func(), damaged bool) tview.Primitive {
 	form.AddButton("Skip (not recommended)", unlock)
 	// Enter saves; Skip stays a deliberate Tab-and-press.
 	submitOnEnter(form, save)
-	form.SetBorder(true).SetTitle(" Protect This Panel ")
+	styleForm(form)
 
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(notice, 4, 0, false).

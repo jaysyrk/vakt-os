@@ -16,11 +16,11 @@ const idsRefresh = time.Second
 var idsKinds = []string{"MODIFIED", "ADDED", "DELETED", "PERMISSIONS", "INFO"}
 
 var idsKindColour = map[string]string{
-	"MODIFIED":    "red",
-	"ADDED":       "yellow",
-	"DELETED":     "red",
-	"PERMISSIONS": "orange",
-	"INFO":        "green",
+	"MODIFIED":    "#d75f5f",
+	"ADDED":       "#d7af5f",
+	"DELETED":     "#d75f5f",
+	"PERMISSIONS": "#d7875f",
+	"INFO":        "#767676",
 }
 
 type idsAlert struct {
@@ -30,8 +30,7 @@ type idsAlert struct {
 	Detail  string
 }
 
-// parseAlertLine reads one tab-separated line: RFC3339 time, kind, detail.
-// An unparseable line is kept with whatever text it has rather than dropped.
+// RFC3339 time, kind, detail. An unparseable line is kept, not dropped.
 func parseAlertLine(line string) (idsAlert, bool) {
 	line = strings.TrimRight(line, "\r")
 	if strings.TrimSpace(line) == "" {
@@ -69,8 +68,7 @@ func countByKind(alerts []idsAlert) map[string]int {
 	return counts
 }
 
-// activityBuckets counts findings per interval, oldest first. Undated ones are
-// left out rather than placed at "now", which would invent activity.
+// Oldest first. Undated findings are left out rather than placed at "now".
 func activityBuckets(alerts []idsAlert, now time.Time, width time.Duration, buckets int) []int {
 	out := make([]int, buckets)
 	if buckets == 0 || width <= 0 {
@@ -94,7 +92,6 @@ func activityBuckets(alerts []idsAlert, now time.Time, width time.Duration, buck
 	return out
 }
 
-// sparkline renders counts as blocks, scaled to the busiest bucket.
 func sparkline(counts []int) string {
 	blocks := []rune("▁▂▃▄▅▆▇█")
 	peak := 0
@@ -124,32 +121,30 @@ func sparkline(counts []int) string {
 	return b.String()
 }
 
-// idsMonitorReport renders the live view. Separate from the widget so it is
-// testable without a terminal.
+// Separate from the widget so it is testable without a terminal.
 func idsMonitorReport(alertPath, statusPath string, now time.Time) string {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "[::b]vakt-ids[-]   %s\n\n", idsDaemonLine(statusPath))
+	fmt.Fprintf(&b, "  [::b]vakt-ids[-]   %s\n\n", idsDaemonLine(statusPath))
 
 	data, err := os.ReadFile(alertPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			// An unreadable file is not an all-clear; showing zeros here would
-			// be worse than showing nothing.
-			fmt.Fprintf(&b, "[red]Cannot read %s: %v[-]\n\n", alertPath, err)
-			b.WriteString("[red]This is not an all-clear.[-] vakt-ids may be recording\n")
-			b.WriteString("findings this page cannot see. Check it from a root shell.\n")
+			// An unreadable file is not an all-clear.
+			fmt.Fprintf(&b, "  [#d75f5f]Cannot read %s: %v[-]\n\n", alertPath, err)
+			b.WriteString("  [#d75f5f]This is not an all-clear.[-] vakt-ids may be recording\n")
+			b.WriteString("  findings this page cannot see. Check it from a root shell.\n")
 			return b.String()
 		}
-		b.WriteString("[green]No findings recorded.[-]\n\n")
-		b.WriteString("vakt-ids writes to " + alertPath + " as it finds things.\n")
+		b.WriteString("  [#5faf5f]No findings recorded.[-]\n\n")
+		b.WriteString("  [#767676]vakt-ids writes to " + alertPath + " as it finds things.[-]\n")
 		return b.String()
 	}
 
 	alerts := parseAlerts(string(data))
 	if len(alerts) == 0 {
-		b.WriteString("[green]No findings recorded.[-]\n\n")
-		b.WriteString("vakt-ids writes to " + alertPath + " as it finds things.\n")
+		b.WriteString("  [#5faf5f]No findings recorded.[-]\n\n")
+		b.WriteString("  [#767676]vakt-ids writes to " + alertPath + " as it finds things.[-]\n")
 		return b.String()
 	}
 
@@ -158,7 +153,7 @@ func idsMonitorReport(alertPath, statusPath string, now time.Time) string {
 	for _, kind := range idsKinds {
 		colour := idsKindColour[kind]
 		if counts[kind] == 0 {
-			colour = "gray"
+			colour = "#767676"
 		}
 		fmt.Fprintf(&b, "[%s]%s %d[-]   ", colour, kind, counts[kind])
 	}
@@ -171,11 +166,11 @@ func idsMonitorReport(alertPath, statusPath string, now time.Time) string {
 	}
 	sort.Strings(unknown)
 	for _, kind := range unknown {
-		fmt.Fprintf(&b, "[white]%s %d[-]   ", kind, counts[kind])
+		fmt.Fprintf(&b, "[#dadada]%s %d[-]   ", kind, counts[kind])
 	}
 	b.WriteString("\n\n")
 
-	fmt.Fprintf(&b, "  last hour  [aqua]%s[-]\n\n",
+	fmt.Fprintf(&b, "  last hour  [#5fd7d7]%s[-]\n\n",
 		sparkline(activityBuckets(alerts, now, time.Minute, 60)))
 
 	b.WriteString("[::b]  Most recent[-]\n\n")
@@ -183,25 +178,24 @@ func idsMonitorReport(alertPath, statusPath string, now time.Time) string {
 		a := alerts[i]
 		colour, known := idsKindColour[a.Kind]
 		if !known {
-			colour = "white"
+			colour = "#dadada"
 		}
 		stamp := "        "
 		if a.HasTime {
 			stamp = a.When.Local().Format("15:04:05")
 		}
-		fmt.Fprintf(&b, "  [gray]%s[-]  [%s]%-11s[-]  %s\n", stamp, colour, a.Kind, a.Detail)
+		fmt.Fprintf(&b, "  [#767676]%s[-]  [%s]%-11s[-]  %s\n", stamp, colour, a.Kind, a.Detail)
 	}
 
-	fmt.Fprintf(&b, "\n  [gray]%d finding(s) on record. Refreshing every %s.[-]\n",
+	fmt.Fprintf(&b, "\n  [#767676]%d finding(s) on record. Refreshing every %s.[-]\n",
 		len(alerts), idsRefresh)
 	return b.String()
 }
 
-// idsDaemonLine describes vakt-ids itself, from the supervisor's status file.
 func idsDaemonLine(statusPath string) string {
 	data, err := os.ReadFile(statusPath)
 	if err != nil {
-		return "[yellow]supervisor status unavailable[-]"
+		return "[#d7af5f]supervisor status unavailable[-]"
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Split(line, "\t")
@@ -209,23 +203,20 @@ func idsDaemonLine(statusPath string) string {
 			continue
 		}
 		state, readiness, detail := fields[1], fields[4], fields[5]
-		colour := "red"
+		colour := "#d75f5f"
 		if state == "running" && readiness == "ready" {
-			colour = "green"
+			colour = "#5faf5f"
 		} else if state == "running" {
-			colour = "yellow"
+			colour = "#d7af5f"
 		}
-		return fmt.Sprintf("[%s]%s / %s[-]  [gray]%s[-]", colour, state, readiness, detail)
+		return fmt.Sprintf("[%s]%s / %s[-]  [#767676]%s[-]", colour, state, readiness, detail)
 	}
-	return "[red]not supervised - vakt-ids is not running[-]"
+	return "[#d75f5f]not supervised - vakt-ids is not running[-]"
 }
 
-// idsMonitor builds the live view and the goroutine that redraws it. The
-// ticker runs for the life of the panel: one small file read a second, and no
-// stale first frame when the page is opened.
+// The ticker runs for the life of the panel: one small file read a second.
 func idsMonitor(app *tview.Application, alertPath, statusPath string) tview.Primitive {
 	view := tview.NewTextView().SetDynamicColors(true)
-	view.SetBorder(true).SetTitle(" Intrusion Detection — live ")
 
 	redraw := func() {
 		report := idsMonitorReport(alertPath, statusPath, time.Now())
@@ -235,8 +226,7 @@ func idsMonitor(app *tview.Application, alertPath, statusPath string) tview.Prim
 		})
 	}
 
-	// Drawn once so the page is never briefly blank. The read happens off the
-	// UI goroutine; only the update is queued back onto it.
+	// Drawn once so the page is never briefly blank.
 	view.SetText(idsMonitorReport(alertPath, statusPath, time.Now()))
 	go func() {
 		for range time.Tick(idsRefresh) {

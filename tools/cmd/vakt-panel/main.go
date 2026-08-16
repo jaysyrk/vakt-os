@@ -5,428 +5,242 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
-// Wide enough for "(i) Intrusion Detection" plus both borders.
-const menuWidth = 26
+const tick = 2 * time.Second
+
+type destination struct {
+	page  string
+	focus tview.Primitive
+	open  func()
+}
 
 func main() {
+	applyTheme()
+
 	app := tview.NewApplication()
-	pages := tview.NewPages()
+	ui := newChrome()
 
 	newOutputView := func() *tview.TextView {
-		view := tview.NewTextView().
+		return tview.NewTextView().
 			SetDynamicColors(true).
 			SetScrollable(true).
-			SetChangedFunc(func() {
-				app.Draw()
-			})
-		view.SetBorder(true).SetTitle(" Output ")
-		return view
+			SetChangedFunc(func() { app.Draw() })
 	}
 
 	runInto := func(view *tview.TextView, name string, args ...string) {
 		view.Clear()
-		fmt.Fprintf(view, "[yellow]Running %s...[-]\n", name)
+		fmt.Fprintf(view, "%srunning %s…%s\n\n", dim, name, off)
 		go func() {
 			out, err := exec.Command(name, args...).CombinedOutput()
 			if err != nil {
-				fmt.Fprintf(view, "[red]Error: %v[-]\n", err)
+				fmt.Fprintf(view, "%s%v%s\n", bad, err, off)
 			}
 			fmt.Fprint(view, string(out))
 		}()
 	}
 
-	dashboardText := tview.NewTextView().
-		SetDynamicColors(true).
-		SetText("[green]System Status: Online[-]\n\n" +
-			"Welcome to Vakt OS Security Appliance.\n\n" +
-			"Use [yellow]Arrow Keys[-] to navigate the menu.\n" +
-			"Press [yellow]Enter[-] to select.\n" +
-			"Press [yellow]ESC[-] to return focus to the main menu at any time.\n")
-	dashboardText.SetBorder(true).SetTitle(" Dashboard ")
-	pages.AddPage("Dashboard", dashboardText, true, true)
+	home := tview.NewTextView().SetDynamicColors(true)
+	refreshHome := func() { home.SetText(dashboardText()) }
+	refreshHome()
 
 	auditView := newOutputView()
-	runAuditBtn := tview.NewButton("Start Scan").SetSelectedFunc(func() {
-		runInto(auditView, "vakt-audit")
-	})
-
-	auditFlex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(runAuditBtn, 3, 1, true).
-		AddItem(auditView, 0, 4, false)
-
-	pages.AddPage("Audit", auditFlex, true, false)
 
 	pkgView := newOutputView()
-	pkgInput := tview.NewInputField().
-		SetLabel(" Package: ").
-		SetFieldWidth(24)
+	pkgForm := tview.NewForm().
+		AddInputField("Package", "", 24, nil, nil).
+		AddInputField("Repository", readRepoURL(), 34, nil, nil)
+	styleForm(pkgForm)
 
-	listPkgBtn := tview.NewButton("List Available").SetSelectedFunc(func() {
-		runInto(pkgView, "zrpkg", "update")
-	})
-	installPkgBtn := tview.NewButton("Install").SetSelectedFunc(func() {
-		name := pkgInput.GetText()
+	pkgField := func(i int) string {
+		return pkgForm.GetFormItem(i).(*tview.InputField).GetText()
+	}
+	pkgForm.AddButton("Install", func() {
+		name := pkgField(0)
 		if name == "" {
 			pkgView.Clear()
-			fmt.Fprint(pkgView, "[red]Enter a package name first.[-]\n")
+			fmt.Fprint(pkgView, bad+"Enter a package name first."+off)
 			return
 		}
 		runInto(pkgView, "zrpkg", "install", name)
 	})
-
-	// The repository is deployment configuration, not part of the build: an
-	// appliance in the field talks to a server somewhere, and the root
-	// filesystem is read-only, so this is the only way to change it without a
-	// shell. It is saved next to the network configuration on the data disk.
-	repoInput := tview.NewInputField().
-		SetLabel(" Repository: ").
-		SetText(readRepoURL()).
-		SetFieldWidth(40)
-
-	saveRepoBtn := tview.NewButton("Save Repository").SetSelectedFunc(func() {
+	pkgForm.AddButton("List", func() { runInto(pkgView, "zrpkg", "update") })
+	pkgForm.AddButton("Save repository", func() {
 		pkgView.Clear()
-		url, path, err := writeRepoURL(repoInput.GetText())
+		url, path, err := writeRepoURL(pkgField(1))
 		if err != nil {
-			fmt.Fprintf(pkgView, "[red]%v[-]\n", err)
+			fmt.Fprintf(pkgView, "%s%v%s\n", bad, err, off)
 			return
 		}
-		repoInput.SetText(url)
-		fmt.Fprintf(pkgView, "[green]Repository set to %s[-]\n", url)
-		fmt.Fprintf(pkgView, "Saved to %s\n\n", path)
+		pkgForm.GetFormItem(1).(*tview.InputField).SetText(url)
+		fmt.Fprintf(pkgView, "%sRepository set to %s%s\n%s%s%s\n", ok, url, off, dim, path, off)
 		if strings.HasPrefix(url, "http://") {
-			fmt.Fprint(pkgView, "[yellow]This is plain HTTP. Signatures still protect what\n"+
-				"you install, but anyone on the path can see what you install.[-]\n\n")
+			fmt.Fprintf(pkgView, "\n%sPlain HTTP. Signatures still protect what you install,\nbut anyone on the path can see what you install.%s\n", warn, off)
 		}
-		fmt.Fprint(pkgView, "Choose List Available to see what it offers.\n")
 	})
 
-	pkgControls := tview.NewFlex().
-		AddItem(pkgInput, 36, 0, true).
-		AddItem(installPkgBtn, 0, 1, false).
-		AddItem(listPkgBtn, 0, 1, false)
-
-	repoControls := tview.NewFlex().
-		AddItem(repoInput, 54, 0, false).
-		AddItem(saveRepoBtn, 0, 1, false)
-
-	pkgFlex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(pkgControls, 3, 1, true).
-		AddItem(repoControls, 1, 0, false).
-		AddItem(pkgView, 0, 4, false)
-
-	pages.AddPage("Packages", pkgFlex, true, false)
+	pkgPage := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(pkgForm, 9, 0, true).
+		AddItem(pkgView, 0, 1, false)
 
 	netView := newOutputView()
 	refreshNet := func() {
 		netView.Clear()
 		fmt.Fprint(netView, netStatusReport())
 	}
+	netAddrBtn := button("Show interfaces (ip addr)", func() { runInto(netView, "ip", "addr") })
 
-	netStatusBtn := tview.NewButton("Refresh Status").SetSelectedFunc(refreshNet)
-	netAddrBtn := tview.NewButton("Show Interfaces (ip addr)").SetSelectedFunc(func() {
-		runInto(netView, "ip", "addr")
-	})
+	netPage := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(netView, 0, 1, false).
+		AddItem(bottomBar(netAddrBtn, 26), 1, 0, true)
 
-	netControls := tview.NewFlex().
-		AddItem(netStatusBtn, 0, 1, true).
-		AddItem(netAddrBtn, 0, 1, false)
-
-	netFlex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(netControls, 3, 1, true).
-		AddItem(netView, 0, 4, false)
-
-	pages.AddPage("Network", netFlex, true, false)
-
-	// Saving here is the only way to configure wireless now that boot no
-	// longer prompts; vakt-net notices the new file and connects on its own.
-	wifiResult := tview.NewTextView().SetDynamicColors(true)
-	wifiResult.SetBorder(true).SetTitle(" Result ")
-
-	savedSSID, savedIface := readNetConfig()
-	wifiForm := tview.NewForm().
-		AddInputField("SSID", savedSSID, 30, nil, nil).
-		AddPasswordField("Password", "", 30, '*', nil).
-		AddInputField("Interface", savedIface, 12, nil, nil)
-
-	wifiForm.AddButton("Save & Connect", func() {
-		ssid := wifiForm.GetFormItem(0).(*tview.InputField).GetText()
-		psk := wifiForm.GetFormItem(1).(*tview.InputField).GetText()
-		iface := wifiForm.GetFormItem(2).(*tview.InputField).GetText()
-
-		wifiResult.Clear()
-		if ssid == "" {
-			fmt.Fprint(wifiResult, "[red]SSID cannot be empty.[-]\n")
-			return
-		}
-		if iface == "" {
-			iface = "wlan0"
-		}
-
-		path, err := writeNetConfig(ssid, psk, iface)
-		if err != nil {
-			fmt.Fprintf(wifiResult, "[red]Failed to write %s: %v[-]\n", path, err)
-			return
-		}
-		fmt.Fprintf(wifiResult, "[green]Saved to %s[-]\n\n", path)
-		fmt.Fprint(wifiResult, "vakt-net will pick this up within a second and\n"+
-			"reconnect. Watch progress on the Network page.\n")
-	})
-	wifiForm.SetBorder(true).SetTitle(" Wi-Fi Configuration ")
-
-	wifiFlex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(wifiForm, 11, 1, true).
-		AddItem(wifiResult, 0, 1, false)
-
-	pages.AddPage("WiFi", wifiFlex, true, false)
+	wifi, wifiFocus, refreshWifi := wifiPage(app)
 
 	servicesView := newOutputView()
-	servicesView.SetTitle(" Services ")
 	refreshServices := func() {
 		servicesView.Clear()
 		fmt.Fprint(servicesView, servicesReport())
 	}
+	servicesLogBtn := button("vakt-net log", func() { runInto(servicesView, "cat", "/run/vakt-net.log") })
 
-	servicesBtn := tview.NewButton("Refresh").SetSelectedFunc(refreshServices)
-	servicesLogBtn := tview.NewButton("vakt-net Log").SetSelectedFunc(func() {
-		runInto(servicesView, "cat", "/run/vakt-net.log")
-	})
+	servicesPage := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(servicesView, 0, 1, false).
+		AddItem(bottomBar(servicesLogBtn, 14), 1, 0, true)
 
-	servicesControls := tview.NewFlex().
-		AddItem(servicesBtn, 0, 1, true).
-		AddItem(servicesLogBtn, 0, 1, false)
+	ids := idsMonitor(app, idsAlerts, servicesStatus)
 
-	servicesFlex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(servicesControls, 3, 1, true).
-		AddItem(servicesView, 0, 4, false)
-
-	pages.AddPage("Services", servicesFlex, true, false)
-
-	// Live rather than a snapshot behind a Refresh button: the question this
-	// page answers is "is anything happening right now", and an operator should
-	// not have to keep pressing a key to find out.
-	idsLive := idsMonitor(app, idsAlerts, servicesStatus)
-
-	// The full record stays one keypress away. The live view shows the most
-	// recent findings; this is everything the alert file still holds.
-	idsHistory := newOutputView()
-	idsHistory.SetTitle(" Full record ")
-	refreshIDS := func() {
-		idsHistory.Clear()
-		fmt.Fprint(idsHistory, idsReport(200))
+	recordView := newOutputView()
+	refreshRecord := func() {
+		recordView.Clear()
+		fmt.Fprint(recordView, idsReport(200))
 	}
 
-	idsBtn := tview.NewButton("Show full record").SetSelectedFunc(refreshIDS)
-	idsFlex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(idsLive, 0, 3, false).
-		AddItem(idsBtn, 3, 1, true).
-		AddItem(idsHistory, 0, 2, false)
+	lock, lockFocus := lockPage()
+	power, powerFocus := powerPage()
 
-	pages.AddPage("IDS", idsFlex, true, false)
+	for _, entry := range []struct {
+		name  string
+		title string
+		body  tview.Primitive
+	}{
+		{"home", "", home},
+		{"audit", "SECURITY AUDIT", auditView},
+		{"packages", "PACKAGES", pkgPage},
+		{"network", "NETWORK", netPage},
+		{"wifi", "", wifi},
+		{"services", "SERVICES", servicesPage},
+		{"ids", "INTRUSION DETECTION", ids},
+		{"record", "INTEGRITY RECORD", recordView},
+		{"lock", "PANEL LOCK", lock},
+		{"power", "POWER", power},
+		{"help", "KEYS", helpPage()},
+	} {
+		ui.pages.AddPage(entry.name, framed(entry.title, entry.body), true, entry.name == "home")
+	}
 
-	// The panel runs unprivileged and cannot signal PID 1, so shutting down
-	// goes through vakt-init's control socket. Doing it any other way would
-	// cut power with the data disk still mounted.
-	powerResult := tview.NewTextView().SetDynamicColors(true)
-	powerResult.SetBorder(true).SetTitle(" Power ")
+	routes := map[rune]destination{
+		'd': {page: "home", focus: home, open: refreshHome},
+		's': {page: "audit", focus: auditView, open: func() { runInto(auditView, "vakt-audit") }},
+		'p': {page: "packages", focus: pkgForm},
+		'n': {page: "network", focus: netAddrBtn, open: refreshNet},
+		'w': {page: "wifi", focus: wifiFocus, open: refreshWifi},
+		'v': {page: "services", focus: servicesLogBtn, open: refreshServices},
+		'i': {page: "ids", focus: ids},
+		'f': {page: "record", focus: recordView, open: refreshRecord},
+		'l': {page: "lock", focus: lockFocus()},
+		'o': {page: "power", focus: powerFocus},
+		'?': {page: "help", focus: nil},
+	}
 
-	requestPower := func(verb, describe string) {
-		powerResult.Clear()
-		if err := requestShutdown(verb); err != nil {
-			fmt.Fprintf(powerResult, "[red]%s failed: %v[-]\n\n", describe, err)
-			fmt.Fprint(powerResult, "From a root shell, busybox 'poweroff' and 'reboot'\n"+
-				"signal vakt-init directly.\n")
+	// Esc is advertised everywhere: a focused field swallows the letters.
+	keys := map[string][]string{
+		"home":     {},
+		"audit":    {"esc:back", "s:rerun"},
+		"packages": {"esc:back", "tab:move"},
+		"network":  {"esc:back", "enter:ip addr"},
+		"wifi":     {"esc:back", "enter:select", "w:rescan"},
+		"services": {"esc:back", "enter:log"},
+		"ids":      {"esc:back", "f:full record"},
+		"record":   {"esc:back", "i:live"},
+		"lock":     {"esc:back", "tab:move"},
+		"power":    {"esc:back", "tab:move"},
+		"help":     {"esc:back"},
+	}
+
+	goTo := func(r rune) {
+		to, known := routes[r]
+		if !known {
 			return
 		}
-		fmt.Fprintf(powerResult, "[yellow]%s requested.[-]\n\n", describe)
-		fmt.Fprint(powerResult, "vakt-init is stopping services, flushing disks and\n"+
-			"unmounting /persistent before the system goes down.\n")
-	}
-
-	powerOffBtn := tview.NewButton("Power Off").SetSelectedFunc(func() {
-		requestPower("poweroff", "Power off")
-	})
-	rebootBtn := tview.NewButton("Reboot").SetSelectedFunc(func() {
-		requestPower("reboot", "Reboot")
-	})
-
-	powerControls := tview.NewFlex().
-		AddItem(powerOffBtn, 0, 1, true).
-		AddItem(rebootBtn, 0, 1, false)
-
-	powerFlex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(powerControls, 3, 1, true).
-		AddItem(powerResult, 0, 4, false)
-
-	pages.AddPage("Power", powerFlex, true, false)
-
-	securityResult := tview.NewTextView().SetDynamicColors(true)
-	securityResult.SetBorder(true).SetTitle(" Result ")
-	securityStatus := tview.NewTextView().SetDynamicColors(true)
-	securityForm := tview.NewForm()
-
-	// Rebuilt after every change rather than updated in place: the form has
-	// a "Current PIN" field and a "Remove PIN" button only when a PIN already
-	// exists, and which fields exist is exactly what changes.
-	var rebuildSecurityForm func()
-	rebuildSecurityForm = func() {
-		securityForm.Clear(true)
-		protected := hasPIN()
-		if protected {
-			securityStatus.SetText("[green]This panel is PIN protected.[-]")
-			securityForm.AddPasswordField("Current PIN", "", 20, '*', nil)
-		} else {
-			securityStatus.SetText("[red]No PIN is set. Anyone with console access has full control.[-]")
+		if to.open != nil {
+			to.open()
 		}
-		securityForm.AddPasswordField("New PIN", "", 20, '*', nil)
-		securityForm.AddPasswordField("Confirm New PIN", "", 20, '*', nil)
-
-		field := func(label string) string {
-			item := securityForm.GetFormItemByLabel(label)
-			if item == nil {
-				return ""
-			}
-			return item.(*tview.InputField).GetText()
+		// Which fields the lock form has is what that page changes.
+		if r == 'l' {
+			to.focus = lockFocus()
 		}
-
-		save := func() {
-			securityResult.Clear()
-			if protected && !verifyPIN(field("Current PIN")) {
-				fmt.Fprint(securityResult, "[red]Current PIN is incorrect.[-]\n")
-				return
-			}
-			newPIN := field("New PIN")
-			if newPIN == "" {
-				fmt.Fprint(securityResult, "[red]New PIN cannot be empty.[-]\n")
-				return
-			}
-			if newPIN != field("Confirm New PIN") {
-				fmt.Fprint(securityResult, "[red]New PIN and confirmation do not match.[-]\n")
-				return
-			}
-			if err := setPIN(newPIN); err != nil {
-				fmt.Fprintf(securityResult, "[red]Could not save PIN: %v[-]\n", err)
-				return
-			}
-			fmt.Fprint(securityResult, "[green]PIN saved.[-]\n")
-			rebuildSecurityForm()
-		}
-		securityForm.AddButton("Set / Change PIN", save)
-		submitOnEnter(securityForm, save)
-
-		if protected {
-			securityForm.AddButton("Remove PIN", func() {
-				securityResult.Clear()
-				if !verifyPIN(field("Current PIN")) {
-					fmt.Fprint(securityResult, "[red]Current PIN is incorrect.[-]\n")
-					return
-				}
-				if err := removePIN(); err != nil {
-					fmt.Fprintf(securityResult, "[red]Could not remove PIN: %v[-]\n", err)
-					return
-				}
-				fmt.Fprint(securityResult, "[yellow]PIN removed. This panel is no longer protected.[-]\n")
-				rebuildSecurityForm()
-			})
+		ui.pages.SwitchToPage(to.page)
+		ui.setKeys(keys[to.page]...)
+		if to.focus != nil {
+			app.SetFocus(to.focus)
 		}
 	}
-	rebuildSecurityForm()
-	securityForm.SetBorder(true).SetTitle(" Panel Lock ")
+	ui.setKeys()
+	ui.setStatus()
 
-	securityFlex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(securityStatus, 1, 0, false).
-		AddItem(securityForm, 9, 1, true).
-		AddItem(securityResult, 0, 1, false)
-
-	pages.AddPage("Security", securityFlex, true, false)
-
-	list := tview.NewList().
-		AddItem("Dashboard", "Overview of system status", 'd', func() {
-			pages.SwitchToPage("Dashboard")
-		}).
-		AddItem("Security Scanner", "Run vakt-audit", 's', func() {
-			pages.SwitchToPage("Audit")
-			app.SetFocus(runAuditBtn)
-		}).
-		AddItem("Package Manager", "Install software with zrpkg", 'p', func() {
-			pages.SwitchToPage("Packages")
-			app.SetFocus(pkgInput)
-		}).
-		AddItem("Network Status", "Check link state and addresses", 'n', func() {
-			pages.SwitchToPage("Network")
-			refreshNet()
-			app.SetFocus(netStatusBtn)
-		}).
-		AddItem("Wi-Fi Setup", "Configure wireless credentials", 'w', func() {
-			pages.SwitchToPage("WiFi")
-			app.SetFocus(wifiForm)
-		}).
-		AddItem("Services", "Inspect background daemons", 'v', func() {
-			pages.SwitchToPage("Services")
-			refreshServices()
-			app.SetFocus(servicesBtn)
-		}).
-		AddItem("Intrusion Detection", "Live view of vakt-ids findings", 'i', func() {
-			pages.SwitchToPage("IDS")
-			refreshIDS()
-			app.SetFocus(idsBtn)
-		}).
-		AddItem("Graphical Mode", "Hand the console to vakt-compositor", 'g', func() {
-			launchCompositor(app, dashboardText, pages)
-		}).
-		AddItem("Panel Lock", "Set, change, or remove the console PIN", 'l', func() {
-			pages.SwitchToPage("Security")
-			app.SetFocus(securityForm)
-		}).
-		AddItem("Power", "Shut down or restart the appliance", 'o', func() {
-			pages.SwitchToPage("Power")
-			app.SetFocus(powerOffBtn)
-		}).
-		AddItem("Exit to Shell", "Drop to a shell prompt", 'q', func() {
-			app.Stop()
-		})
-	// A console is 80x25 and nothing here scrolls. With the descriptions shown
-	// the menu needed 24 of the 25 rows, and a proportional width gave it 18
-	// columns for entries up to 38 wide - so every second line read "Overview
-	// of sy". The shortcut letter and the name carry the meaning; the
-	// descriptions were the part being destroyed.
-	list.ShowSecondaryText(false)
-	list.SetBorder(true).SetTitle(" Main Menu ")
-
-	// Esc targets list, which is not part of the lock/setup screen's tree -
-	// guarded by unlocked so it does nothing until the real menu is what's
-	// actually on screen, rather than pulling focus out of the PIN form.
 	unlocked := false
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if unlocked && event.Key() == tcell.KeyEsc {
-			app.SetFocus(list)
+		if !unlocked {
+			return event
+		}
+		if event.Key() == tcell.KeyEsc {
+			goTo('d')
+			return nil
+		}
+		if event.Key() != tcell.KeyRune || typing(app) {
+			return event
+		}
+		switch event.Rune() {
+		case 'q':
+			app.Stop()
+			return nil
+		case 'g':
+			launchCompositor(app, ui, home)
+			return nil
+		}
+		if _, known := routes[event.Rune()]; known {
+			goTo(event.Rune())
+			return nil
 		}
 		return event
 	})
 
-	// Fixed, not proportional: the widest entry is "(i) Intrusion Detection"
-	// at 23 columns, and a share of 80 does not reliably cover it.
-	flex := tview.NewFlex().
-		AddItem(list, menuWidth, 0, true).
-		AddItem(pages, 0, 1, false)
-
-	title := tview.NewTextView().
-		SetText(" VAKT OS SECURITY APPLIANCE ").
-		SetTextAlign(tview.AlignCenter).
-		SetTextColor(tcell.ColorRed)
-
-	mainLayout := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(title, 1, 1, false).
-		AddItem(flex, 0, 1, true)
+	go func() {
+		for range time.Tick(tick) {
+			name, _ := ui.pages.GetFrontPage()
+			app.QueueUpdateDraw(func() {
+				ui.setStatus()
+				switch name {
+				case "home":
+					refreshHome()
+				case "services":
+					refreshServices()
+				case "network":
+					refreshNet()
+				case "wifi":
+					refreshWifi()
+				}
+			})
+		}
+	}()
 
 	app.EnableMouse(true)
-	gate := authGateRoot(app, mainLayout, list, func() { unlocked = true })
-	// The console vakt-init hands over is still covered in boot messages, and
-	// tcell only repaints cells it has content for.
+	gate := authGateRoot(app, ui.layout, home, func() { unlocked = true })
+	// tcell only repaints cells it has content for; boot messages remain.
 	fmt.Print("\033[2J\033[H")
 
 	if err := app.SetRoot(gate, true).Run(); err != nil {
@@ -434,12 +248,194 @@ func main() {
 	}
 }
 
-// launchCompositor drops out of the TUI and gives the raw console to the
-// framebuffer compositor, then restores the panel when it exits. Suspend is
-// what makes this safe: tview releases the terminal and stops drawing, so the
-// compositor is not fighting it for the console.
-func launchCompositor(app *tview.Application, report *tview.TextView, pages *tview.Pages) {
-	pages.SwitchToPage("Dashboard")
+// Without this, a password containing "q" quits the panel.
+func typing(app *tview.Application) bool {
+	switch app.GetFocus().(type) {
+	case *tview.InputField, *tview.TextArea:
+		return true
+	}
+	return false
+}
+
+func button(label string, selected func()) *tview.Button {
+	b := tview.NewButton(label).SetSelectedFunc(selected)
+	b.SetLabelColor(accentColor).SetBackgroundColor(fieldBG)
+	return b
+}
+
+// A tview Button centres its label across whatever width it is given.
+func bottomBar(b *tview.Button, width int) tview.Primitive {
+	return tview.NewFlex().
+		AddItem(tview.NewBox(), 1, 0, false).
+		AddItem(b, width, 0, true).
+		AddItem(tview.NewBox(), 0, 1, false)
+}
+
+func styleForm(form *tview.Form) {
+	form.SetFieldBackgroundColor(fieldBG).
+		SetLabelColor(dimColor).
+		SetFieldTextColor(plainColor).
+		SetButtonBackgroundColor(fieldBG).
+		SetButtonTextColor(accentColor)
+}
+
+func framed(title string, body tview.Primitive) tview.Primitive {
+	if title == "" {
+		return body
+	}
+	heading := tview.NewTextView().SetDynamicColors(true).SetText(" " + section(title))
+	return tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(heading, 1, 0, false).
+		AddItem(tview.NewBox(), 1, 0, false).
+		AddItem(body, 0, 1, true)
+}
+
+func helpPage() tview.Primitive {
+	entries := [][2]string{
+		{"d", "Dashboard - link state, services, findings"},
+		{"n", "Network - addresses and interface detail"},
+		{"w", "Wi-Fi - pick a network and connect"},
+		{"i", "Intrusion detection - live findings"},
+		{"f", "Integrity record - every finding still on file"},
+		{"s", "Security audit - run vakt-audit"},
+		{"p", "Packages - install software with zrpkg"},
+		{"v", "Services - supervisor state and logs"},
+		{"l", "Panel lock - set, change or remove the PIN"},
+		{"g", "Graphical mode - hand the console to the compositor"},
+		{"o", "Power - shut down or restart"},
+		{"q", "Quit to a shell"},
+		{"esc", "Back to the dashboard"},
+	}
+
+	var b strings.Builder
+	b.WriteString("\n")
+	for _, entry := range entries {
+		fmt.Fprintf(&b, "   %s%s%s  %s%s%s\n", accent, pad(entry[0], 5), off, plain, entry[1], off)
+	}
+	fmt.Fprintf(&b, "\n   %sShortcuts are ignored while a text field has focus.%s\n", dim, off)
+
+	return tview.NewTextView().SetDynamicColors(true).SetText(b.String())
+}
+
+// Rebuilt on every visit: the extra field and button exist only once a PIN does.
+func lockPage() (tview.Primitive, func() tview.Primitive) {
+	status := tview.NewTextView().SetDynamicColors(true)
+	result := tview.NewTextView().SetDynamicColors(true).SetWordWrap(true)
+	form := tview.NewForm()
+	styleForm(form)
+
+	var rebuild func()
+	rebuild = func() {
+		form.Clear(true)
+		protected := hasPIN()
+		if protected {
+			status.SetText(" " + ok + "This panel is PIN protected." + off)
+			form.AddPasswordField("Current PIN", "", 20, '*', nil)
+		} else {
+			status.SetText(" " + bad + "No PIN is set. Anyone with console access has full control." + off)
+		}
+		form.AddPasswordField("New PIN", "", 20, '*', nil)
+		form.AddPasswordField("Confirm New PIN", "", 20, '*', nil)
+
+		field := func(label string) string {
+			item := form.GetFormItemByLabel(label)
+			if item == nil {
+				return ""
+			}
+			return item.(*tview.InputField).GetText()
+		}
+
+		save := func() {
+			result.Clear()
+			if protected && !verifyPIN(field("Current PIN")) {
+				fmt.Fprint(result, bad+"Current PIN is incorrect."+off)
+				return
+			}
+			newPIN := field("New PIN")
+			if newPIN == "" {
+				fmt.Fprint(result, bad+"New PIN cannot be empty."+off)
+				return
+			}
+			if newPIN != field("Confirm New PIN") {
+				fmt.Fprint(result, bad+"New PIN and confirmation do not match."+off)
+				return
+			}
+			if err := setPIN(newPIN); err != nil {
+				fmt.Fprintf(result, "%sCould not save PIN: %v%s", bad, err, off)
+				return
+			}
+			fmt.Fprint(result, ok+"PIN saved."+off)
+			rebuild()
+		}
+		form.AddButton("Set / change PIN", save)
+		submitOnEnter(form, save)
+
+		if protected {
+			form.AddButton("Remove PIN", func() {
+				result.Clear()
+				if !verifyPIN(field("Current PIN")) {
+					fmt.Fprint(result, bad+"Current PIN is incorrect."+off)
+					return
+				}
+				if err := removePIN(); err != nil {
+					fmt.Fprintf(result, "%sCould not remove PIN: %v%s", bad, err, off)
+					return
+				}
+				fmt.Fprint(result, warn+"PIN removed. This panel is no longer protected."+off)
+				rebuild()
+			})
+		}
+	}
+	rebuild()
+
+	page := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(status, 2, 0, false).
+		AddItem(form, 9, 0, true).
+		AddItem(result, 0, 1, false)
+
+	focus := func() tview.Primitive {
+		rebuild()
+		return form
+	}
+	return page, focus
+}
+
+// Through vakt-init's socket: the panel is unprivileged and cannot signal PID 1.
+func powerPage() (tview.Primitive, tview.Primitive) {
+	result := tview.NewTextView().SetDynamicColors(true).SetWordWrap(true)
+
+	request := func(verb, describe string) {
+		result.Clear()
+		if err := requestShutdown(verb); err != nil {
+			fmt.Fprintf(result, "%s%s failed: %v%s\n\n%sFrom a root shell, busybox 'poweroff' and 'reboot' signal vakt-init directly.%s",
+				bad, describe, err, off, dim, off)
+			return
+		}
+		fmt.Fprintf(result, "%s%s requested.%s\n\n%svakt-init is stopping services, flushing disks and unmounting /persistent.%s",
+			warn, describe, off, dim, off)
+	}
+
+	powerOff := button("Power off", func() { request("poweroff", "Power off") })
+	reboot := button("Reboot", func() { request("reboot", "Reboot") })
+
+	buttons := tview.NewFlex().
+		AddItem(tview.NewBox(), 1, 0, false).
+		AddItem(powerOff, 16, 0, true).
+		AddItem(tview.NewBox(), 2, 0, false).
+		AddItem(reboot, 16, 0, false).
+		AddItem(tview.NewBox(), 0, 1, false)
+
+	page := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(buttons, 1, 0, true).
+		AddItem(tview.NewBox(), 1, 0, false).
+		AddItem(result, 0, 1, false)
+
+	return page, powerOff
+}
+
+// Suspend is what makes this safe: tview releases the terminal and stops drawing.
+func launchCompositor(app *tview.Application, ui *chrome, report *tview.TextView) {
+	ui.pages.SwitchToPage("home")
 
 	var runErr error
 	suspended := app.Suspend(func() {
@@ -452,19 +448,17 @@ func launchCompositor(app *tview.Application, report *tview.TextView, pages *tvi
 		cmd.Stderr = os.Stderr
 		runErr = cmd.Run()
 
-		// Wipe the console before the TUI redraws over the framebuffer.
 		fmt.Print("\033[2J\033[H")
 	})
 
 	report.Clear()
 	switch {
 	case !suspended:
-		fmt.Fprint(report, "[red]Could not suspend the panel; graphical mode unavailable.[-]\n")
+		fmt.Fprint(report, "\n  "+bad+"Could not suspend the panel; graphical mode unavailable."+off)
 	case runErr != nil:
-		fmt.Fprintf(report, "[red]vakt-compositor exited with an error: %v[-]\n\n", runErr)
-		fmt.Fprint(report, "This usually means /dev/fb0 is missing - the kernel needs a\n"+
-			"framebuffer console for graphical mode to work.\n")
+		fmt.Fprintf(report, "\n  %svakt-compositor exited with an error: %v%s\n\n  %sThis usually means /dev/fb0 is missing - the kernel needs a\n  framebuffer console for graphical mode to work.%s",
+			bad, runErr, off, dim, off)
 	default:
-		fmt.Fprint(report, "[green]Returned from graphical mode.[-]\n")
+		report.SetText(dashboardText())
 	}
 }

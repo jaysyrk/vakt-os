@@ -14,8 +14,7 @@ const (
 	defaultRepoURL     = "http://10.0.2.2:8080"
 )
 
-// repoConfPath returns the persistent location when the data disk is mounted,
-// so a repository set here survives a reboot, and the RAM-only path otherwise.
+// The persistent path when the disk is mounted, the RAM-only one otherwise.
 func repoConfPath() string {
 	if info, err := os.Stat("/persistent"); err == nil && info.IsDir() {
 		return persistentRepoConf
@@ -23,9 +22,7 @@ func repoConfPath() string {
 	return fallbackRepoConf
 }
 
-// readRepoURL loads the configured repository, matching the precedence zrpkg
-// itself applies: the environment, then the persistent file, then the image
-// default, then the built-in.
+// The precedence zrpkg itself applies: environment, persistent, image, built-in.
 func readRepoURL() string {
 	if url := strings.TrimSpace(os.Getenv("ZRPKG_REPO_URL")); url != "" {
 		return url
@@ -62,12 +59,8 @@ func repoURLFrom(path string) string {
 	return ""
 }
 
-// writeRepoURL points this system at a different repository.
-//
-// The scheme check mirrors zrpkg's: anything but http or https would be a way
-// to make the package manager read from somewhere nobody intended. Validating
-// here as well means the panel rejects it while the user is still looking at
-// the form, rather than at the next install.
+// The scheme check mirrors zrpkg's, so a bad URL is rejected while the form is
+// still on screen rather than at the next install.
 func writeRepoURL(raw string) (string, string, error) {
 	url := strings.TrimRight(strings.TrimSpace(raw), "/")
 	if url == "" {
@@ -89,9 +82,7 @@ func writeRepoURL(raw string) (string, string, error) {
 		return url, path, err
 	}
 
-	// Deliberately world-readable: unlike the Wi-Fi configuration next to it,
-	// a repository URL is not a secret, and zrpkg may run as either root or the
-	// panel's own account.
+	// World-readable: not a secret, and zrpkg may run as root or as the panel.
 	body := "# Vakt OS package repository.\n" +
 		"# Packages are verified against /etc/vakt/trusted.key whatever server\n" +
 		"# they come from, so this setting decides where to fetch, not what to\n" +

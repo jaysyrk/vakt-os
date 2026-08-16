@@ -18,9 +18,7 @@ const (
 	saltBytes          = 16
 )
 
-// authFilePath prefers the persistent location so a PIN survives a reboot,
-// falling back to the RAM-only path - the same precedence vaktnet.go and
-// zrpkgconf.go use.
+// Same precedence as vaktnet.go and zrpkgconf.go.
 func authFilePath() string {
 	if info, err := os.Stat("/persistent"); err == nil && info.IsDir() {
 		return persistentAuthFile
@@ -46,14 +44,11 @@ const (
 	pinUnusable
 )
 
-// storedPIN reports whether the auth file holds something verifiable.
-// verifyPINAt fails safe against a malformed value for every candidate, the
-// correct PIN included, so "exists" is not the same as "has a PIN".
+// "Exists" is not "has a PIN": verifyPINAt fails safe on a malformed value.
 func storedPIN(path string) pinState {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// Anything but a missing file - typically one owned by root rather
-		// than the panel's user - means the PIN cannot be checked.
+		// Anything but a missing file means the PIN cannot be checked.
 		if os.IsNotExist(err) {
 			return pinAbsent
 		}
@@ -75,17 +70,13 @@ func storedPIN(path string) pinState {
 	return pinUsable
 }
 
-// hasPINAt reports whether a usable PIN is configured.
-//
-// An unusable file counts as no PIN rather than a locked console: damaging it
-// means already running as the panel's user, and a console nobody can open
-// again is the worse outcome. setupScreen says so in red.
+// An unusable file counts as no PIN rather than a permanently locked console;
+// setupScreen says so in red.
 func hasPINAt(path string) bool {
 	return storedPIN(path) == pinUsable
 }
 
-// setPINAt hashes and stores a new PIN. Each call draws a fresh salt, so the
-// same PIN never produces the same stored bytes twice.
+// Each call draws a fresh salt.
 func setPINAt(path, pin string) error {
 	salt := make([]byte, saltBytes)
 	if _, err := rand.Read(salt); err != nil {
@@ -97,16 +88,12 @@ func setPINAt(path, pin string) error {
 	}
 
 	body := hex.EncodeToString(salt) + ":" + hashPIN(pin, salt) + "\n"
-	// Durable, not just atomic: an unsynced rename can leave a zero-length
-	// file after a power cut, which storedPIN reads as unusable and hasPINAt
-	// reports as no PIN - an unlocked console. 0600 because this file exists
-	// to deny the console to whoever does not know the PIN.
+	// Durable, not just atomic: an unsynced rename can leave a zero-length file
+	// after a power cut, which reads as no PIN at all - an unlocked console.
 	return durable.WriteFile(path, []byte(body), 0600)
 }
 
-// verifyPINAt checks a candidate PIN against the stored hash in constant
-// time, so a wrong guess cannot be distinguished from a right one by how long
-// the comparison took.
+// Constant time: a wrong guess must not be distinguishable by duration.
 func verifyPINAt(path, pin string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -124,9 +111,7 @@ func verifyPINAt(path, pin string) bool {
 	return subtle.ConstantTimeCompare([]byte(got), []byte(wantHex)) == 1
 }
 
-// removePINAt deletes the stored PIN. Removing one that is already gone is
-// not an error - the caller's intent ("no PIN should exist") is satisfied
-// either way.
+// Removing a PIN that is already gone is not an error.
 func removePINAt(path string) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err

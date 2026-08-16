@@ -6,19 +6,12 @@ import (
 	"os"
 )
 
-// initSocket is where vakt-init listens for readiness notifications and control
-// requests. It is owned by root and group-writable by the account the panel
-// runs as, which is the only reason an unprivileged panel can ask for a
-// shutdown at all.
+// Root-owned, group-writable by the panel's account: the only reason an
+// unprivileged panel can ask for a shutdown at all.
 const initSocket = "/run/init.sock"
 
-// requestShutdown asks PID 1 to bring the system down.
-//
-// Signalling PID 1 needs privileges the panel deliberately lacks, and
-// reboot(2) here would cut power to a mounted disk with daemons still writing.
-// Asking init means the ordered sequence happens however shutdown was invoked.
-//
-// verb is "poweroff", "reboot", or "halt".
+// verb is "poweroff", "reboot", or "halt". Asking init rather than calling
+// reboot(2) means the ordered shutdown runs with the disk still mounted.
 func requestShutdown(verb string) error {
 	if _, err := os.Stat(initSocket); err != nil {
 		return fmt.Errorf("vakt-init is not listening on %s", initSocket)
