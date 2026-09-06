@@ -374,6 +374,23 @@ stays the durable record.
 </details>
 
 <details>
+<summary><b>Changing the IDS scan interval</b></summary>
+
+Same fixed-argument problem as the webhook above, same fix: a config file
+instead of the `--interval` flag, which `vakt-init` never passes.
+
+```bash
+echo "5m" > /persistent/etc/vakt-ids-interval.conf
+```
+
+Any duration Go's `time.ParseDuration` accepts (`30s`, `5m`, `1h`). Picked up
+on the next `vakt-ids` start. An unparseable or non-positive value is
+ignored, logged, and the daemon keeps its 30-second default rather than
+stopping.
+
+</details>
+
+<details>
 <summary><b>Rotating the package-signing key</b></summary>
 
 A repository-side operation, not something done on a running appliance:
