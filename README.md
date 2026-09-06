@@ -43,12 +43,12 @@ and Zig.
 **No systemd. No glibc userland. No distro underneath.** Just a static busybox
 rootfs, a Rust PID 1, and the tools in this repo.
 
-—
+---
 
 ## Status — read this first
 
 | | |
-|—|—|
+|---|---|
 | **Boots and runs?** | Yes — boots, mounts its disk, and unlocks on real hardware |
 | **Safe for real use?** | **Not yet.** No independent security review |
 | **A/B OS updates** | Written, never survived a real reboot — [details](docs/OS_UPDATES.md) |
@@ -57,7 +57,7 @@ rootfs, a Rust PID 1, and the tools in this repo.
 > **Treat this as a working prototype, not a product.** It does what it says,
 > but nobody outside the project has audited it.
 
-—
+---
 
 ## What it looks like
 
@@ -97,7 +97,7 @@ else — because until you do, console access is total:
 These are captured from a real boot, not mocked up: `build-system/screenshots.py`
 boots the ISO under QEMU and dumps the console, so anyone can regenerate them.
 
-—
+---
 
 ## Try it in a VM (5 minutes)
 
@@ -113,7 +113,7 @@ qemu-system-x86_64 -m 8G -enable-kvm \
     -netdev user,id=n0 -device e1000,netdev=n0
 ```
 
-That’s it. You’ll land on a PIN setup screen, then the panel.
+That's it. You'll land on a PIN setup screen, then the panel.
 
 Headless, over SSH or from a phone — pick **Vakt OS (serial console)** at the
 GRUB menu and the whole boot is text in your terminal:
@@ -125,15 +125,15 @@ qemu-system-x86_64 -m 8G -display none -serial stdio -cdrom vakt-os.iso
 > **Give it plenty of RAM.** The initramfs *is* the root filesystem, so it all
 > has to fit in memory — and during boot the compressed copy and the unpacked
 > one exist at once. Too little RAM and the kernel panics with
-> `No working init found`, which reads like a broken image and isn’t one. A
-> `host`-kernel build carries the machine’s driver and firmware trees and runs
+> `No working init found`, which reads like a broken image and isn't one. A
+> `host`-kernel build carries the machine's driver and firmware trees and runs
 > a few hundred MB; `VAKT_KERNEL=custom` is far smaller.
 
-—
+---
 
 ## Put it on real hardware
 
-You need **two drives**: one to boot from, one for data. They can’t be the
+You need **two drives**: one to boot from, one for data. They can't be the
 same drive.
 
 **1. Build it** — use the default `host` kernel for real hardware:
@@ -161,27 +161,27 @@ sudo mkfs.ext4 -L VAKTDATA /dev/sdY
 ```
 
 > **The `VAKTDATA` label is not optional.** GRUB and `vakt-init` both find the
-> data disk by label, never by device name — device letters aren’t stable.
+> data disk by label, never by device name — device letters aren't stable.
 > Get this wrong and the appliance silently boots into RAM-only mode.
 
 **5. Boot it.** Hit your boot-menu key (`F12` / `F10` / `Esc`), pick the USB.
 
-> **Turn Secure Boot off.** GRUB here isn’t signed for it.
+> **Turn Secure Boot off.** GRUB here isn't signed for it.
 
-—
+---
 
 ## If something goes wrong
 
 | Symptom | Do this |
-|—|—|
+|---|---|
 | Forgot the PIN | Boot the **root recovery shell** GRUB entry → `rm -f /persistent/etc/vakt-panel.auth` |
 | Stuck in a launch/exit loop | It backs off after 3 tries and prints why — read the red text |
 | `/persistent` not mounting | Check the data disk really has the `VAKTDATA` label |
-| Panel won’t start at all | Recovery shell entry always skips the panel |
+| Panel won't start at all | Recovery shell entry always skips the panel |
 
 Full runbook: **[docs/OPERATIONS.md](docs/OPERATIONS.md)**
 
-—
+---
 
 ## How it boots
 
@@ -196,7 +196,7 @@ GRUB → vmlinuz → initramfs → /init  (vakt-init, Rust, PID 1)
                                           └── vakt-compositor (/dev/fb0)
 ```
 
-—
+---
 
 ## Architecture
 
@@ -205,49 +205,49 @@ left, the files and sockets that carry state between them on the right.
 
 ```mermaid
 flowchart TD
-    init[“vakt-init (Rust)<br/>PID 1, root<br/>mount · seal / · supervise · shut down”]
-    net[“vakt-net (Rust)<br/>Wi-Fi / DHCP<br/>Landlock sandboxed”]
-    ids[“vakt-ids (Go)<br/>filesystem integrity monitor”]
-    panel[“vakt-panel (Go)<br/>PIN-protected TUI<br/>runs unprivileged”]
-    comp[“vakt-compositor (Rust)<br/>draws /dev/fb0<br/>Landlock sandboxed”]
-    zrpkg[“zrpkg (Rust)<br/>resolve · fetch · verify · install”]
-    verify[“vakt-verify (Zig)<br/>independent signature re-check”]
-    server([“zrpkg-server (Go)<br/>HTTP repo, rate-limited”])
-    audit[“vakt-audit (Go)<br/>CIS-style compliance checks”]
-    disk[(“/persistent<br/>data disk”)]
-    conf[“/persistent/etc/vakt-net.conf”]
-    status[“/run/*.status, *.alerts, *.scan”]
+    init["vakt-init (Rust)<br/>PID 1, root<br/>mount · seal / · supervise · shut down"]
+    net["vakt-net (Rust)<br/>Wi-Fi / DHCP<br/>Landlock sandboxed"]
+    ids["vakt-ids (Go)<br/>filesystem integrity monitor"]
+    panel["vakt-panel (Go)<br/>PIN-protected TUI<br/>runs unprivileged"]
+    comp["vakt-compositor (Rust)<br/>draws /dev/fb0<br/>Landlock sandboxed"]
+    zrpkg["zrpkg (Rust)<br/>resolve · fetch · verify · install"]
+    verify["vakt-verify (Zig)<br/>independent signature re-check"]
+    server(["zrpkg-server (Go)<br/>HTTP repo, rate-limited"])
+    audit["vakt-audit (Go)<br/>CIS-style compliance checks"]
+    disk[("/persistent<br/>data disk")]
+    conf["/persistent/etc/vakt-net.conf"]
+    status["/run/*.status, *.alerts, *.scan"]
 
-    init — supervises —> net
-    init — supervises —> ids
-    init — “drops to uid 1000, execs” —> panel
-    panel — “execs (g)” —> comp
-    panel — execs —> zrpkg
-    panel — execs —> audit
-    panel — reads —> status
-    panel — writes —> conf
-    net — reads —> conf
-    net — writes —> status
-    ids — watches —> disk
-    ids — writes —> status
-    zrpkg — HTTPS —> server
-    zrpkg — “checked by” —> verify
-    zrpkg — “installs into” —> disk
+    init -- supervises --> net
+    init -- supervises --> ids
+    init -- "drops to uid 1000, execs" --> panel
+    panel -- "execs (g)" --> comp
+    panel -- execs --> zrpkg
+    panel -- execs --> audit
+    panel -- reads --> status
+    panel -- writes --> conf
+    net -- reads --> conf
+    net -- writes --> status
+    ids -- watches --> disk
+    ids -- writes --> status
+    zrpkg -- HTTPS --> server
+    zrpkg -- "checked by" --> verify
+    zrpkg -- "installs into" --> disk
 ```
 
 `vakt-net` and `vakt-compositor` are Landlock-sandboxed to the one path or
 device each needs — see the [Security model](#security-model) below for what
-that actually restricts. `vakt-verify` re-checking `zrpkg`’s own signature
+that actually restricts. `vakt-verify` re-checking `zrpkg`'s own signature
 independently is the same reasoning applied to trust rather than filesystem
 access: the tool that decides whether to trust a package is not the same
 code path that signed it.
 
-—
+---
 
-## What’s in it
+## What's in it
 
 | Component | Lang | Does what |
-|—|—|—|
+|---|---|---|
 | `vakt-init` | Rust | PID 1: mount, seal root, supervise, drop privilege, shut down |
 | `vakt-net` | Rust | Wi-Fi/DHCP, Landlock sandboxed |
 | `vakt-ids` | Go | Filesystem integrity monitor |
@@ -259,7 +259,7 @@ code path that signed it.
 | `vakt-verify` | Zig | Independent, from-scratch signature re-check |
 | `vakt-update` | Rust | A/B image updates — [unvalidated](docs/OS_UPDATES.md) |
 
-—
+---
 
 ## Security model
 
@@ -299,19 +299,19 @@ property, seen from the other side.
 <summary><b>Known trade-offs (click)</b></summary>
 
 - **Physical access wins.** The `vakt.rootshell` GRUB entry hands out a root
-  shell. That’s deliberate — it’s the recovery path for a forgotten PIN. The
+  shell. That's deliberate — it's the recovery path for a forgotten PIN. The
   PIN defends against a passer-by, not against someone with a screwdriver.
 - **Wi-Fi password is plaintext at rest**, protected by root-only file
   permissions rather than encryption. `vakt-net` needs it at boot, before the
-  PIN (the only real secret) has been entered — so there’s no key available to
-  encrypt it with that wouldn’t break unattended boot. Reasoning in
+  PIN (the only real secret) has been entered — so there's no key available to
+  encrypt it with that wouldn't break unattended boot. Reasoning in
   [ROADMAP.md](ROADMAP.md).
 - **No independent review yet.** Everything found so far was found from
   inside the project.
 
 </details>
 
-—
+---
 
 ## Everyday tasks
 
@@ -320,7 +320,7 @@ property, seen from the other side.
 
 ```bash
 zrpkg update              # list what the repository offers
-zrpkg list                # list what’s installed here
+zrpkg list                # list what's installed here
 zrpkg install <name>      # resolve, fetch, verify, install
 zrpkg verify <name>       # check signature without installing
 zrpkg remove <name>       # delete exactly what was installed
@@ -328,7 +328,7 @@ zrpkg repo <url>          # change the repository
 ```
 
 Installs land in `/persistent/zrpkg`. Dependencies resolve automatically.
-Removal is refused while something still depends on it (`—force` overrides).
+Removal is refused while something still depends on it (`--force` overrides).
 
 Build and sign a repository:
 
@@ -338,7 +338,7 @@ Build and sign a repository:
 
 First run generates a signing key at `build-system/keys/repo.key` (gitignored,
 mode 0600). Every package is signed, then independently re-checked with
-`vakt-verify` before it’s published.
+`vakt-verify` before it's published.
 
 Host it yourself, anywhere:
 
@@ -364,7 +364,7 @@ limiting.
 <details>
 <summary><b>Wi-Fi</b></summary>
 
-Set it from the panel’s **Wi-Fi Setup** page, or write
+Set it from the panel's **Wi-Fi Setup** page, or write
 `/persistent/etc/vakt-net.conf` by hand:
 
 ```ini
@@ -391,7 +391,7 @@ vakt-restore /mnt/usb/backup-2026-08-07.tar.gz /persistent
 ```
 
 Restore verifies a SHA-256 checksum before touching anything, and refuses a
-destination that isn’t empty.
+destination that isn't empty.
 
 </details>
 
@@ -399,7 +399,7 @@ destination that isn’t empty.
 <summary><b>OS updates (unvalidated)</b></summary>
 
 > **Never survived a real reboot.** Read [docs/OS_UPDATES.md](docs/OS_UPDATES.md)
-> before using this on anything you can’t recover by hand.
+> before using this on anything you can't recover by hand.
 
 A/B updates for the kernel and image itself, not just packages. The boot
 medium (slot A) is never written to; an update lands as slot B on
@@ -409,18 +409,18 @@ working boot.
 ```bash
 sudo ./build-system/mkupdate.sh 1.1.0   # build + sign a new slot B
 vakt-update check                       # on the appliance
-vakt-update apply —reboot
+vakt-update apply --reboot
 ```
 
 </details>
 
-—
+---
 
 ## Build options
 
 | | `VAKT_KERNEL=host` *(default)* | `VAKT_KERNEL=custom` |
-|—|—|—|
-| Kernel | The build machine’s own | Built from `build-system/kernel.config` |
+|---|---|---|
+| Kernel | The build machine's own | Built from `build-system/kernel.config` |
 | Hardware | Whatever the host supports | QEMU, common wired NICs, NVMe/AHCI, USB |
 | Wi-Fi | Yes | **No** — no firmware blobs |
 | Use it for | Real hardware | A VM, or one fixed known machine |
@@ -433,15 +433,15 @@ sudo VAKT_REPO_URL=https://packages.example.com ./build.sh   # bake in a repo UR
 > `vakt-data.img` is never recreated if it already exists — it holds your
 > Wi-Fi credentials, packages, and IDS baseline. Delete it to start clean.
 
-—
+---
 
 ## Tests
 
 ```bash
-cargo test —manifest-path vakt-init/Cargo.toml
-cargo test —manifest-path pkg-manager/Cargo.toml
-cargo test —manifest-path vakt-net/Cargo.toml
-cargo test —manifest-path vakt-update/Cargo.toml
+cargo test --manifest-path vakt-init/Cargo.toml
+cargo test --manifest-path pkg-manager/Cargo.toml
+cargo test --manifest-path vakt-net/Cargo.toml
+cargo test --manifest-path vakt-update/Cargo.toml
 cd tools && go test ./cmd/...
 cd vakt-verify && zig build test
 ```
@@ -473,8 +473,8 @@ deploy/                     Running the repository on a rented server
 docs/OPERATIONS.md          Runbook: lockouts, crash loops, IDS alerts, backups
 docs/SECURITY_AUDIT.md      Findings, unsafe-block review, fuzzing notes
 docs/HARDWARE_VALIDATION.md Checklist for testing on real hardware
-docs/NEXT.md                What’s being worked on next, and what isn’t
-docs/OS_UPDATES.md          A/B update design and what’s actually verified
+docs/NEXT.md                What's being worked on next, and what isn't
+docs/OS_UPDATES.md          A/B update design and what's actually verified
 .github/workflows/build.yml CI: tests, package pipeline, ISO artifact
 ```
 
@@ -483,10 +483,10 @@ docs/OS_UPDATES.md          A/B update design and what’s actually verified
 <details>
 <summary><b>Third-party components</b></summary>
 
-Almost everything here is written from scratch. What isn’t:
+Almost everything here is written from scratch. What isn't:
 
 | Component | Source | License |
-|—|—|—|
+|---|---|---|
 | busybox 1.35.0 (static) | [busybox.net](https://www.busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox) | GPL-2.0 |
 | Linux kernel | [kernel.org](https://kernel.org) | GPL-2.0 |
 | GRUB | Arch package | GPL-3.0 |
@@ -499,7 +499,7 @@ Go: [`rivo/tview`](https://github.com/rivo/tview),
 [`gdamore/tcell`](https://github.com/gdamore/tcell).
 Zig: none — `vakt-verify` uses only the standard library.
 
-The readiness protocol borrows systemd’s
+The readiness protocol borrows systemd's
 [`sd_notify`](https://www.freedesktop.org/software/systemd/man/sd_notify.html)
 wire format (no code). Kernel hardening options follow the
 [Kernel Self Protection Project](https://kernsec.org/wiki/index.php/Kernel_Self_Protection_Project/Recommended_Settings).
@@ -509,7 +509,7 @@ CI: `actions/checkout`, `actions/cache`, `actions/upload-artifact`,
 
 </details>
 
-—
+---
 
 ## License
 
@@ -520,12 +520,12 @@ anything you build on it stays under the same license and ships with its
 source — including when people reach a modified version over a network, which
 is the part the Affero clause adds over the plain GPL.
 
-**Commercial licenses are available.** If the AGPL doesn’t suit what you want
+**Commercial licenses are available.** If the AGPL doesn't suit what you want
 to build, the copyright holder can license this code to you under different
 terms — [open an issue](https://github.com/jaysyrk/vakt-os/issues) to ask.
 Being the sole author is what makes that possible.
 
 Third-party components keep their own licenses — see **Third-party components**
 above. The built image carries GPL-2.0 software (busybox, the Linux kernel)
-alongside this project’s own binaries: separate programs sharing a disk, not a
+alongside this project's own binaries: separate programs sharing a disk, not a
 combined work.
