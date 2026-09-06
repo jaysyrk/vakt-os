@@ -429,7 +429,7 @@ jobs:
           body: |
             ## Try it
 
-            Boot `vakt-os.iso` in a VM. Give it 8G -- the initramfs is the root
+            Boot `vakt-os.iso` in a VM. Give it 8G — the initramfs is the root
             filesystem, so it all has to fit in memory.
 
             ```bash
@@ -451,7 +451,7 @@ jobs:
             ```
 
             That pairing only holds for matching versions. **An ISO from one
-            release cannot install packages from another** -- each build mints
+            release cannot install packages from another** — each build mints
             its own signing key, which is the same property that means nobody,
             including this project, can publish something your appliance will
             install.
@@ -466,6 +466,6 @@ jobs:
             ## Status
 
             A working prototype, not a product. No independent security review.
-            Hardware coverage is thin -- see
+            Hardware coverage is thin — see
             [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md), and
             please file a hardware report if you boot it on something new.
