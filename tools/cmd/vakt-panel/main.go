@@ -68,7 +68,9 @@ func main() {
 		}
 		runInto(pkgView, "zrpkg", "install", name)
 	})
-	pkgForm.AddButton("List", func() { runInto(pkgView, "zrpkg", "update") })
+	refreshPkgs := func() { runInto(pkgView, "zrpkg", "list") }
+	pkgForm.AddButton("Installed", refreshPkgs)
+	pkgForm.AddButton("Available", func() { runInto(pkgView, "zrpkg", "update") })
 	pkgForm.AddButton("Save repository", func() {
 		pkgView.Clear()
 		url, path, err := writeRepoURL(pkgField(1))
@@ -145,7 +147,7 @@ func main() {
 	routes := map[rune]destination{
 		'd': {page: "home", focus: home, open: refreshHome},
 		's': {page: "audit", focus: auditView, open: func() { runInto(auditView, "vakt-audit") }},
-		'p': {page: "packages", focus: pkgForm},
+		'p': {page: "packages", focus: pkgForm, open: refreshPkgs},
 		'n': {page: "network", focus: netAddrBtn, open: refreshNet},
 		'w': {page: "wifi", focus: wifiFocus, open: refreshWifi},
 		'v': {page: "services", focus: servicesLogBtn, open: refreshServices},

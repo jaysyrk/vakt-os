@@ -180,12 +180,12 @@ understanding the whole system.
 
 | # | Issue | Where | Why it’s a good entry point |
 |—|—|—|—|
-| 1 | **Panel: show installed packages** on the Packages page | `tools/cmd/vakt-panel` (Go) | `zrpkg list` already exists; this is wiring it into the TUI. Visible result, no new logic. |
+| 1 | ~~**Panel: show installed packages** on the Packages page~~ — done: an “Installed” button runs `zrpkg list`, and it now runs automatically when the page opens. The old “List” button (which actually ran `zrpkg update`, showing the repository’s offerings) is relabelled “Available” so the two aren’t confused. | `tools/cmd/vakt-panel` (Go) | |
 | 3 | ~~**`vakt-audit —json`** for scripting and fleet use~~ — done: JSON-only output on stdout with an added `passed`/`total` summary, and a nonzero exit code when any check fails, so a script never has to parse the human banner. | `tools/cmd/vakt-audit` (Go) | |
-| 4 | **Add a `vakt-audit` check** (e.g. verify `/` really is mounted read-only) | `tools/cmd/vakt-audit` (Go) | Self-contained; the existing checks are the template. |
-| 5 | **`vakt-ids`: configurable scan interval** from the config file, not just the flag | `tools/cmd/vakt-ids` (Go) | Small, and `vakt-init` supervises with fixed arguments so the flag is unreachable on an appliance. |
+| 4 | ~~**Add a `vakt-audit` check**~~ — done: verifies `/` is really mounted `ro` by reading `/proc/mounts` directly, the same independence argument the sysctl check already makes. | `tools/cmd/vakt-audit` (Go) | |
+| 5 | ~~**`vakt-ids`: configurable scan interval**~~ — done: a one-line `/persistent/etc/vakt-ids-interval.conf`, same pattern as the existing webhook config, since `vakt-init` supervises with fixed arguments. An unparseable or non-positive value is ignored and logged rather than stopping the daemon. | `tools/cmd/vakt-ids` (Go) | |
 | 6 | ~~**`checkimage.sh`: assert more invariants**~~ — done: now checks `/etc/passwd` is present, `/bin/busybox` is executable, and `/persistent` exists, with matching CI fixtures for each new failure mode. | `build-system/checkimage.sh` (shell) | |
-| 7 | **Architecture diagram** for the README | docs | No code at all. Genuinely wanted. |
+| 7 | ~~**Architecture diagram** for the README~~ — done: a Mermaid diagram showing supervision and the files/sockets that carry state between the running pieces, complementing the boot-sequence diagram already there. | docs | |
 
 **2 — Panel: wired-only network setup — done.** The gap was UI-only:
 `vakt-net` (`config.rs`) already treats a config with an `interface` and no
@@ -196,9 +196,7 @@ machine had no path through the panel. It now saves a wired setup when SSID
 is blank and Interface is set, only rejects the form when both are empty,
 and says out loud in the form that this is how to do it.
 
-Before opening these: label them `good first issue`, and write each one with
-the file to touch, how to build it, and how to test it. An issue that says
-only what to do is not a first issue.
+All seven drafts above have shipped. The next batch isn’t written yet.
 
 —
 

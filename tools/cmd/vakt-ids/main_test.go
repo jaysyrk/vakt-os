@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestSendWebhookToDeliversTheAlert(t *testing.T) {
@@ -101,6 +102,62 @@ func writeFile(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func TestLoadIntervalFromPrefersAnExplicitFlag(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "vakt-ids-interval.conf")
+	writeFile(t, configPath, "60s\n")
+
+	got := loadIntervalFrom(5*time.Second, true, configPath)
+	if got != 5*time.Second {
+		t.Errorf("got %s, want the flag value", got)
+	}
+}
+
+func TestLoadIntervalFromFallsBackToConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "vakt-ids-interval.conf")
+	writeFile(t, configPath, "5m\n")
+
+	got := loadIntervalFrom(30*time.Second, false, configPath)
+	if got != 5*time.Minute {
+		t.Errorf("got %s, want the config file's interval", got)
+	}
+}
+
+func TestLoadIntervalFromUsesTheDefaultWhenNeitherIsSet(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "does-not-exist.conf")
+
+	got := loadIntervalFrom(30*time.Second, false, configPath)
+	if got != 30*time.Second {
+		t.Errorf("got %s, want the flag's default", got)
+	}
+}
+
+// A garbled or non-positive value in the config file must not silently stop
+// the daemon from scanning at all.
+func TestLoadIntervalFromIgnoresAnUnparseableConfigValue(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "vakt-ids-interval.conf")
+	writeFile(t, configPath, "not-a-duration\n")
+
+	got := loadIntervalFrom(30*time.Second, false, configPath)
+	if got != 30*time.Second {
+		t.Errorf("got %s, want the default when the config value is unparseable", got)
+	}
+}
+
+func TestLoadIntervalFromRejectsANonPositiveConfigValue(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "vakt-ids-interval.conf")
+	writeFile(t, configPath, "0s\n")
+
+	got := loadIntervalFrom(30*time.Second, false, configPath)
+	if got != 30*time.Second {
+		t.Errorf("got %s, want the default when the config value is zero", got)
 	}
 }
 

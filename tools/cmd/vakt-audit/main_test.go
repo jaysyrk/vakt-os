@@ -151,6 +151,56 @@ func TestCheckSysctlHardeningFailsWhenNoneArePresent(t *testing.T) {
 	}
 }
 
+func writeMounts(t *testing.T, contents string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "mounts")
+	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestCheckReadOnlyRootPassesWhenSealed(t *testing.T) {
+	path := writeMounts(t, "/dev/sda1 / ext4 ro,relatime 0 0\nproc /proc proc rw,relatime 0 0\n")
+	result := checkReadOnlyRootAt(path)
+	if !result.Passed {
+		t.Errorf("expected pass, got: %s", result.Description)
+	}
+}
+
+func TestCheckReadOnlyRootFailsWhenWritable(t *testing.T) {
+	path := writeMounts(t, "/dev/sda1 / ext4 rw,relatime 0 0\n")
+	result := checkReadOnlyRootAt(path)
+	if result.Passed {
+		t.Error("a writable root must fail the check")
+	}
+}
+
+func TestCheckReadOnlyRootFailsWithNoRootEntry(t *testing.T) {
+	path := writeMounts(t, "proc /proc proc rw,relatime 0 0\n")
+	result := checkReadOnlyRootAt(path)
+	if result.Passed {
+		t.Error("no mount entry for / must fail, not silently pass")
+	}
+}
+
+func TestCheckReadOnlyRootFailsOnAMissingFile(t *testing.T) {
+	result := checkReadOnlyRootAt(filepath.Join(t.TempDir(), "absent"))
+	if result.Passed {
+		t.Error("a missing mounts file must fail, not silently pass")
+	}
+}
+
+// A remount is a second entry for the same mount point, not a replacement of
+// the first - /proc/mounts lists both, and the later one is authoritative.
+func TestCheckReadOnlyRootUsesTheLastEntryForRoot(t *testing.T) {
+	path := writeMounts(t, "/dev/sda1 / ext4 rw,relatime 0 0\n/dev/sda1 / ext4 ro,relatime 0 0\n")
+	result := checkReadOnlyRootAt(path)
+	if !result.Passed {
+		t.Errorf("expected the later remount entry to win, got: %s", result.Description)
+	}
+}
+
 func TestHardeningSysctlsListHasNoDuplicatePaths(t *testing.T) {
 	seen := map[string]bool{}
 	for _, c := range hardeningSysctls {

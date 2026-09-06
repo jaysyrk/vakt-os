@@ -35,9 +35,10 @@ const (
 	webhookTimeout = 5 * time.Second
 )
 
-// Config fallback for the fixed vakt-init service args - see
+// Config fallbacks for the fixed vakt-init service args - see
 // vakt-init/src/services.rs.
 const webhookConfigPath = "/persistent/etc/vakt-ids-webhook.conf"
+const intervalConfigPath = "/persistent/etc/vakt-ids-interval.conf"
 
 // webhookURL is set once in main(). Empty means disabled (the default).
 var webhookURL string
@@ -68,13 +69,21 @@ type baseline struct {
 
 func main() {
 	watch := flag.String("watch", "/persistent", "Comma-separated directories to monitor")
-	interval := flag.Duration("interval", 30*time.Second, "Time between integrity scans")
+	interval := flag.Duration("interval", 30*time.Second, "Time between integrity scans (falls back to "+intervalConfigPath+")")
 	baselinePath := flag.String("baseline", "", "Where to persist the baseline (default: inside the first watched dir)")
 	once := flag.Bool("once", false, "Run a single scan and exit instead of running as a daemon")
 	webhook := flag.String("webhook", "", "Optional URL to POST each alert to as JSON (disabled if empty; falls back to "+webhookConfigPath+")")
 	flag.Parse()
 
 	webhookURL = loadWebhookURLFrom(*webhook, webhookConfigPath)
+
+	intervalExplicit := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "interval" {
+			intervalExplicit = true
+		}
+	})
+	scanInterval := loadIntervalFrom(*interval, intervalExplicit, intervalConfigPath)
 
 	log.SetFlags(0)
 	log.SetPrefix("[vakt-ids] ")
@@ -135,9 +144,9 @@ func main() {
 		return
 	}
 
-	log.Printf("Monitoring every %s.", *interval)
+	log.Printf("Monitoring every %s.", scanInterval)
 	for {
-		time.Sleep(*interval)
+		time.Sleep(scanInterval)
 		runScan(base, available, statePath)
 	}
 }
@@ -320,6 +329,30 @@ func alert(kind, detail string) {
 	if webhookURL != "" {
 		sendWebhook(kind, detail)
 	}
+}
+
+// loadIntervalFrom picks the scan interval: an explicit --interval flag wins,
+// then the config file (a single duration string, e.g. "60s"), then the
+// flag's own default. vakt-init supervises with fixed arguments, so the flag
+// alone is unreachable on an appliance - see vakt-init/src/services.rs.
+func loadIntervalFrom(flagValue time.Duration, flagExplicit bool, configPath string) time.Duration {
+	if flagExplicit {
+		return flagValue
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return flagValue
+	}
+	text := strings.TrimSpace(strings.SplitN(string(data), "\n", 2)[0])
+	if text == "" {
+		return flagValue
+	}
+	parsed, err := time.ParseDuration(text)
+	if err != nil || parsed <= 0 {
+		log.Printf("Warning: invalid interval %q in %s, using %s", text, configPath, flagValue)
+		return flagValue
+	}
+	return parsed
 }
 
 func loadWebhookURLFrom(flagValue, configPath string) string {
