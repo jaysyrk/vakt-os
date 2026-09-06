@@ -33,6 +33,7 @@ func main() {
 		checkRootUIDs(),
 		checkShadowPermissions(),
 		checkSysctlHardening(),
+		checkReadOnlyRoot(),
 	}
 
 	passedCount := 0
@@ -156,6 +157,39 @@ var hardeningSysctls = []hardeningSysctl{
 
 func checkSysctlHardening() AuditResult {
 	return checkSysctlHardeningIn("/", hardeningSysctls)
+}
+
+func checkReadOnlyRoot() AuditResult { return checkReadOnlyRootAt("/proc/mounts") }
+
+// checkReadOnlyRootAt reads the mount options vakt-init's seal_root() actually
+// produced, rather than trusting that it ran. The last entry for "/" wins,
+// matching /proc/mounts semantics for a remount.
+func checkReadOnlyRootAt(path string) AuditResult {
+	name := "Read-Only Root Filesystem"
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return AuditResult{name, false, fmt.Sprintf("Could not read %s: %v", path, err)}
+	}
+
+	options, found := "", false
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[1] != "/" {
+			continue
+		}
+		options, found = fields[3], true
+	}
+
+	if !found {
+		return AuditResult{name, false, fmt.Sprintf("No mount entry for / in %s.", path)}
+	}
+	for _, opt := range strings.Split(options, ",") {
+		if opt == "ro" {
+			return AuditResult{name, true, "/ is mounted read-only."}
+		}
+	}
+	return AuditResult{name, false, fmt.Sprintf("/ is mounted read-write (options: %s).", options)}
 }
 
 // checkSysctlHardeningIn reads each sysctl under root and compares it to the
