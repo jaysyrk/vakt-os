@@ -19,8 +19,16 @@ type AuditResult struct {
 	Description string `json:"description"`
 }
 
+// AuditReport is the --json output: results plus a passed/total summary.
+type AuditReport struct {
+	Results []AuditResult `json:"results"`
+	Passed  int           `json:"passed"`
+	Total   int           `json:"total"`
+}
+
 func main() {
-	fmt.Println("=== Vakt OS Security Auditor (vakt-audit) ===")
+	jsonOutput := len(os.Args) > 1 && os.Args[1] == "--json"
+
 	results := []AuditResult{
 		checkRootUIDs(),
 		checkShadowPermissions(),
@@ -29,19 +37,33 @@ func main() {
 
 	passedCount := 0
 	for _, r := range results {
-		status := "[FAIL]"
 		if r.Passed {
-			status = "[PASS]"
 			passedCount++
 		}
-		fmt.Printf("%s %s - %s\n", status, r.CheckName, r.Description)
 	}
 
-	fmt.Printf("\nCompliance Score: %d/%d Checks Passed\n", passedCount, len(results))
-
-	if len(os.Args) > 1 && os.Args[1] == "--json" {
-		out, _ := json.MarshalIndent(results, "", "  ")
+	if jsonOutput {
+		report := AuditReport{Results: results, Passed: passedCount, Total: len(results)}
+		out, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "vakt-audit: could not marshal report: %v\n", err)
+			os.Exit(2)
+		}
 		fmt.Println(string(out))
+	} else {
+		fmt.Println("=== Vakt OS Security Auditor (vakt-audit) ===")
+		for _, r := range results {
+			status := "[FAIL]"
+			if r.Passed {
+				status = "[PASS]"
+			}
+			fmt.Printf("%s %s - %s\n", status, r.CheckName, r.Description)
+		}
+		fmt.Printf("\nCompliance Score: %d/%d Checks Passed\n", passedCount, len(results))
+	}
+
+	if passedCount != len(results) {
+		os.Exit(1)
 	}
 }
 

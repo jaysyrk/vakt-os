@@ -1,10 +1,10 @@
-# What's next
+# What’s next
 
 [ROADMAP.md](../ROADMAP.md) is what the software does and why. This is the
 working list: what to do next, in what order, and what is deliberately not
 being done yet.
 
----
+—
 
 ## Blocking everything else
 
@@ -33,18 +33,18 @@ and the band (channel 6, 2.4GHz).
 **The panel used to make you type an SSID from memory, and that was the real
 defect here** — a typo and a network out of range produced the same silent
 timeout. Both halves now exist: `vakt-net` asks the supplicant for a scan and
-writes `/run/vakt-net.scan`, and the panel's Wi-Fi page is a picker over that
+writes `/run/vakt-net.scan`, and the panel’s Wi-Fi page is a picker over that
 list. Neither half has met a real radio yet; under QEMU there is nothing to
 scan, so what is confirmed is the parsing and the empty case.
 
----
+—
 
 ## Validation still open
 
 Full checklist in [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md).
 
 | Area | State |
-|---|---|
+|—|—|
 | Boot, storage, panel, PIN, read-only root | ✅ real hardware |
 | IDS detection and alerting | ✅ host + booted appliance |
 | Wired DHCP | ✅ QEMU — real NIC untested |
@@ -53,7 +53,7 @@ Full checklist in [HARDWARE_VALIDATION.md](HARDWARE_VALIDATION.md).
 | Secure Boot | ❌ never attempted |
 | Panel Lock PIN change | ✅ QEMU, full round trip — real hardware still untested |
 | Framebuffer compositor | ❌ never run on a real display |
-| Shutdown / poweroff | ✅ shell `poweroff` on real hardware; the panel's `SHUTDOWN=` path verified under QEMU |
+| Shutdown / poweroff | ✅ shell `poweroff` on real hardware; the panel’s `SHUTDOWN=` path verified under QEMU |
 | A/B image updates | ❌ never survived one reboot |
 
 CI now boots the image it builds — `build-system/boottest.sh` runs it headless
@@ -73,11 +73,11 @@ deliberately ungranted device node succeeds there and proves nothing. The
 daemons now log any path they granted and still cannot open, which moves this
 from untestable to at least observable on the appliance.
 
----
+—
 
 ## Fixed: a stray fragment on the Dashboard page
 
-A screenshot of the panel showed `t done` after the dashboard's last line,
+A screenshot of the panel showed `t done` after the dashboard’s last line,
 reproducible and always in the same place. Everything above was ruled out
 empirically and correctly: the panel never emits the string, it is in no
 binary and no source file, and `dmesg` does not contain it.
@@ -91,18 +91,18 @@ changed, so those cells survive every redraw.
 The screenshots that settled it caught the same fragment on the Wi-Fi page as
 well, at the same screen position on a page with entirely different content:
 it was never tied to the dashboard, only to the cells nothing happened to
-paint over. `app.Sync()` on the refresh tick repaints every cell from tcell's
+paint over. `app.Sync()` on the refresh tick repaints every cell from tcell’s
 own buffer, and the fragment is gone from a rebuilt image.
 
----
+—
 
 ## Fixed: init talking over the console session
 
 The supervisor and the readiness watcher run on background threads and printed
-with `println!` to PID 1's stdout — the same `/dev/console` the panel and the
+with `println!` to PID 1’s stdout — the same `/dev/console` the panel and the
 shell use. A service reporting ready while someone typed spliced
-`[Vakt-Init] Service 'vakt-net' is ready.` into their command line; observed on
-real hardware, where a `cat /run/vakt-net.status` became a "can't open" error
+`[Vakt-Init] Service ‘vakt-net’ is ready.` into their command line; observed on
+real hardware, where a `cat /run/vakt-net.status` became a “can’t open” error
 for a path nobody typed.
 
 `console::claim()` now marks the console as owned for the lifetime of each
@@ -111,7 +111,7 @@ for a path nobody typed.
 either way — and boot output, which happens before any session exists, is
 unchanged.
 
----
+—
 
 ## Before calling anything v0.1.0
 
@@ -123,7 +123,7 @@ unchanged.
 - [ ] Wi-Fi passing, above
 - [x] **Panel Lock PIN change confirmed.** Driven through the real TUI over a
       serial console under QEMU: setup screen accepts a PIN, it lands on the
-      persistent disk owned by the panel's user, a reboot shows the lock
+      persistent disk owned by the panel’s user, a reboot shows the lock
       screen, the right PIN unlocks and a wrong one does not. This found the
       durability bug fixed alongside it. Never yet done on real hardware.
 - [ ] Release notes: what works, what does not, which machine it was tested on
@@ -134,7 +134,7 @@ unchanged.
 Do not tag while anything above is open. A first release that cannot install a
 package is worse than no release.
 
----
+—
 
 ## Getting people to actually use it
 
@@ -146,17 +146,17 @@ repositories and no reason for anyone to find this one.
 1. **Topics on the repo.** Free, immediate, and the only discovery mechanism
    that works without promotion: `linux`, `operating-system`, `embedded-linux`,
    `immutable`, `security`, `appliance`, `rust`, `golang`, `zig`, `osdev`.
-2. **Enable Discussions.** Somewhere for "will it run on X" that is not a bug.
+2. **Enable Discussions.** Somewhere for “will it run on X” that is not a bug.
 3. **Social preview image.** The owl. Links get shared as cards.
 4. **A 2–4 minute demo video**, once Wi-Fi works. Real machine booting,
    network coming up, a signed package installing, a **tampered** package
    being refused. The refusal is the memorable part — it is the claim that
    sounds like marketing until someone watches it happen.
-   `./build-system/demo.sh --serve` stages it so every take is identical.
+   `./build-system/demo.sh —serve` stages it so every take is identical.
    *Do not demo A/B updates.* They have never worked once.
 5. **Show HN**, after the video. Technical, first person: the problem, the
    architecture, what works, what does not, what feedback is wanted. Not
-   "look what a teenager built" — the work is more impressive without that
+   “look what a teenager built” — the work is more impressive without that
    framing, and it invites the wrong kind of attention.
 6. **Targeted posts**, tailored per community, not cross-posted: r/linux,
    r/rust, r/selfhosted, osdev, Lobsters if an invite turns up.
@@ -168,31 +168,39 @@ repositories and no reason for anyone to find this one.
 **What to measure:** outside contributors, merged external PRs, hardware
 reports, real bug reports. Not stars. Fifty stars with three contributors and
 ten hardware reports is a much better story than two thousand drive-by stars,
-and it is the difference between "built something impressive" and "ran a
-project other engineers chose to join".
+and it is the difference between “built something impressive” and “ran a
+project other engineers chose to join”.
 
----
+—
 
 ## Good first issues (drafts)
 
 Not opened yet. Each is small, self-contained, and does not require
 understanding the whole system.
 
-| # | Issue | Where | Why it's a good entry point |
-|---|---|---|---|
+| # | Issue | Where | Why it’s a good entry point |
+|—|—|—|—|
 | 1 | **Panel: show installed packages** on the Packages page | `tools/cmd/vakt-panel` (Go) | `zrpkg list` already exists; this is wiring it into the TUI. Visible result, no new logic. |
-| 2 | **Panel: wired network setup.** The only network page demands an SSID, so a wired-only machine cannot be configured from the UI at all | `tools/cmd/vakt-panel` (Go) | A real gap with an obvious shape: a form that writes `interface=` without an `ssid=`. |
-| 3 | **`vakt-audit --json`** for scripting and fleet use | `tools/cmd/vakt-audit` (Go) | Pure output formatting over checks that already run. |
+| 3 | ~~**`vakt-audit —json`** for scripting and fleet use~~ — done: JSON-only output on stdout with an added `passed`/`total` summary, and a nonzero exit code when any check fails, so a script never has to parse the human banner. | `tools/cmd/vakt-audit` (Go) | |
 | 4 | **Add a `vakt-audit` check** (e.g. verify `/` really is mounted read-only) | `tools/cmd/vakt-audit` (Go) | Self-contained; the existing checks are the template. |
 | 5 | **`vakt-ids`: configurable scan interval** from the config file, not just the flag | `tools/cmd/vakt-ids` (Go) | Small, and `vakt-init` supervises with fixed arguments so the flag is unreachable on an appliance. |
-| 6 | **`checkimage.sh`: assert more invariants** — `/etc/passwd` present, busybox executable, `/persistent` exists | `build-system/checkimage.sh` (shell) | Shell only, and every check is one more class of unbootable image caught before boot. |
+| 6 | ~~**`checkimage.sh`: assert more invariants**~~ — done: now checks `/etc/passwd` is present, `/bin/busybox` is executable, and `/persistent` exists, with matching CI fixtures for each new failure mode. | `build-system/checkimage.sh` (shell) | |
 | 7 | **Architecture diagram** for the README | docs | No code at all. Genuinely wanted. |
+
+**2 — Panel: wired-only network setup — done.** The gap was UI-only:
+`vakt-net` (`config.rs`) already treats a config with an `interface` and no
+`ssid` as “wired, DHCP only” - `NetConfig::is_wireless()` is false whenever
+the SSID is empty. The Wi-Fi page’s Connect button just refused to save with
+an empty SSID field at all (`tools/cmd/vakt-panel/wifi.go`), so a wired-only
+machine had no path through the panel. It now saves a wired setup when SSID
+is blank and Interface is set, only rejects the form when both are empty,
+and says out loud in the form that this is how to do it.
 
 Before opening these: label them `good first issue`, and write each one with
 the file to touch, how to build it, and how to test it. An issue that says
 only what to do is not a first issue.
 
----
+—
 
 ## Deliberately not doing yet
 

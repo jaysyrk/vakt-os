@@ -90,6 +90,22 @@ func readScan() []network {
 	return parseScan(string(data))
 }
 
+// resolveConnectFields validates the Connect form's SSID/interface pair. A
+// blank SSID with an interface is a valid wired-only setup - vakt-net
+// already treats that as "wired, DHCP only" (config.rs).
+func resolveConnectFields(ssid, iface string) (resolvedIface, errMsg string) {
+	if ssid == "" && iface == "" {
+		return "", "Pick a network, type an SSID, or set an interface for a wired connection."
+	}
+	if ssid == "" {
+		return iface, ""
+	}
+	if iface == "" {
+		iface = "wlan0"
+	}
+	return iface, ""
+}
+
 // A picker rather than a text box: a mistyped SSID reports only as "did not
 // associate".
 func wifiPage(app *tview.Application) (tview.Primitive, tview.Primitive, func()) {
@@ -114,19 +130,21 @@ func wifiPage(app *tview.Application) (tview.Primitive, tview.Primitive, func())
 	connect := func() {
 		ssid, psk, iface := field(0), field(1), field(2)
 		result.Clear()
-		if ssid == "" {
-			fmt.Fprint(result, bad+"Pick a network, or type an SSID."+off)
+		iface, errMsg := resolveConnectFields(ssid, iface)
+		if errMsg != "" {
+			fmt.Fprint(result, bad+errMsg+off)
 			return
-		}
-		if iface == "" {
-			iface = "wlan0"
 		}
 		path, err := writeNetConfig(ssid, psk, iface)
 		if err != nil {
 			fmt.Fprintf(result, "%sCould not write %s: %v%s", bad, path, err, off)
 			return
 		}
-		fmt.Fprintf(result, "%sSaved.%s %svakt-net picks this up within a second; watch the\nheader for the link state.%s", ok, off, dim, off)
+		if ssid == "" {
+			fmt.Fprintf(result, "%sSaved as a wired connection on %s.%s %svakt-net picks this up within a second; watch the\nheader for the link state.%s", ok, iface, off, dim, off)
+		} else {
+			fmt.Fprintf(result, "%sSaved.%s %svakt-net picks this up within a second; watch the\nheader for the link state.%s", ok, off, dim, off)
+		}
 	}
 	form.AddButton("Connect", connect)
 	submitOnEnter(form, connect)
@@ -184,9 +202,13 @@ func wifiPage(app *tview.Application) (tview.Primitive, tview.Primitive, func())
 		AddItem(heading("NETWORKS"), 1, 0, false).
 		AddItem(table, 0, 1, true)
 
+	hint := tview.NewTextView().SetDynamicColors(true).SetWordWrap(true).
+		SetText(" " + dim + "Wired only? Leave SSID blank and set Interface\n (e.g. eth0)." + off)
+
 	right := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(heading("CONNECT"), 1, 0, false).
-		AddItem(form, 0, 1, false)
+		AddItem(form, 0, 1, false).
+		AddItem(hint, 2, 0, false)
 
 	columns := tview.NewFlex().
 		AddItem(left, 0, 1, true).

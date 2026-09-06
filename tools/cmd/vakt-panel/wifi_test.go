@@ -55,6 +55,43 @@ func TestBarsAlwaysOccupyFourCells(t *testing.T) {
 	}
 }
 
+func TestResolveConnectFieldsDefaultsWirelessInterface(t *testing.T) {
+	iface, errMsg := resolveConnectFields("HomeNet", "")
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if iface != "wlan0" {
+		t.Errorf("got interface %q, want wlan0", iface)
+	}
+}
+
+func TestResolveConnectFieldsKeepsExplicitWirelessInterface(t *testing.T) {
+	iface, errMsg := resolveConnectFields("HomeNet", "wlan1")
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if iface != "wlan1" {
+		t.Errorf("got interface %q, want wlan1", iface)
+	}
+}
+
+func TestResolveConnectFieldsAllowsWiredOnlySetup(t *testing.T) {
+	iface, errMsg := resolveConnectFields("", "eth0")
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if iface != "eth0" {
+		t.Errorf("got interface %q, want eth0 (not defaulted to wlan0)", iface)
+	}
+}
+
+func TestResolveConnectFieldsRejectsBothFieldsEmpty(t *testing.T) {
+	_, errMsg := resolveConnectFields("", "")
+	if errMsg == "" {
+		t.Error("expected an error when neither SSID nor interface is set")
+	}
+}
+
 func TestParseScanSkipsMalformedLines(t *testing.T) {
 	got := parseScan("\t-40\t2437\tWPA2\nnofields\ngood\t-50\t2437\tWPA2\nbad\tnotanumber\t2437\tWPA2\nbad\t-50\tnotanumber\tWPA2\n")
 

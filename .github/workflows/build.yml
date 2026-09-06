@@ -81,9 +81,9 @@ jobs:
           # unbootable image, so exercise it against archives with the two
           # faults that have actually shipped.
           WORK=$(mktemp -d)
-          mkdir -p "$WORK/img"/{usr/bin,bin,lib/modules,usr/share/udhcpc}
+          mkdir -p "$WORK/img"/{usr/bin,bin,lib/modules,usr/share/udhcpc,etc,persistent}
           mkdir -p "$WORK/img/lib64"
-          touch "$WORK/img"/{init,usr/bin/vakt-panel,bin/busybox,usr/bin/modprobe} \
+          touch "$WORK/img"/{init,usr/bin/vakt-panel,bin/busybox,usr/bin/modprobe,etc/passwd} \
             "$WORK/img/lib64/ld-linux-x86-64.so.2"
 
           # The real image always ships this, and checkimage.sh reads it.
@@ -123,6 +123,25 @@ jobs:
           chmod 644 "$WORK/img/init" && pack "$WORK/deadinit.cpio.gz"
           if ./build-system/checkimage.sh "$WORK/deadinit.cpio.gz" 2>/dev/null; then
             echo "::error::checkimage.sh passed an image whose /init is not executable"; exit 1
+          fi
+          chmod 755 "$WORK/img/init"
+
+          rm "$WORK/img/etc/passwd" && pack "$WORK/nopasswd.cpio.gz"
+          touch "$WORK/img/etc/passwd"
+          if ./build-system/checkimage.sh "$WORK/nopasswd.cpio.gz" 2>/dev/null; then
+            echo "::error::checkimage.sh passed an image with no /etc/passwd"; exit 1
+          fi
+
+          chmod 644 "$WORK/img/bin/busybox" && pack "$WORK/deadbusybox.cpio.gz"
+          chmod 755 "$WORK/img/bin/busybox"
+          if ./build-system/checkimage.sh "$WORK/deadbusybox.cpio.gz" 2>/dev/null; then
+            echo "::error::checkimage.sh passed an image whose busybox is not executable"; exit 1
+          fi
+
+          rmdir "$WORK/img/persistent" && pack "$WORK/nopersistent.cpio.gz"
+          mkdir "$WORK/img/persistent"
+          if ./build-system/checkimage.sh "$WORK/nopersistent.cpio.gz" 2>/dev/null; then
+            echo "::error::checkimage.sh passed an image with no /persistent mount point"; exit 1
           fi
 
           # `ip route add default` silently leaves the default route on the
@@ -410,7 +429,7 @@ jobs:
           body: |
             ## Try it
 
-            Boot `vakt-os.iso` in a VM. Give it 8G — the initramfs is the root
+            Boot `vakt-os.iso` in a VM. Give it 8G -- the initramfs is the root
             filesystem, so it all has to fit in memory.
 
             ```bash
@@ -432,7 +451,7 @@ jobs:
             ```
 
             That pairing only holds for matching versions. **An ISO from one
-            release cannot install packages from another** — each build mints
+            release cannot install packages from another** -- each build mints
             its own signing key, which is the same property that means nobody,
             including this project, can publish something your appliance will
             install.
@@ -447,6 +466,6 @@ jobs:
             ## Status
 
             A working prototype, not a product. No independent security review.
-            Hardware coverage is thin — see
+            Hardware coverage is thin -- see
             [docs/HARDWARE_VALIDATION.md](docs/HARDWARE_VALIDATION.md), and
             please file a hardware report if you boot it on something new.

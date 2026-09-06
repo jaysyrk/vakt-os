@@ -103,6 +103,27 @@ if exists "lib/modules"; then
   fi
 fi
 
+if ! exists "etc/passwd"; then
+  fail "no /etc/passwd in the image - nothing can look up an account"
+fi
+
+# busybox is the interpreter behind every symlinked applet (sh, mount, ip, ...).
+busybox_mode=$(mode_of "bin/busybox")
+if [ -z "$busybox_mode" ]; then
+  fail "no /bin/busybox in the image - every applet symlink points nowhere"
+else
+  case "${busybox_mode%[.+]}" in
+    -??x*) ;;
+    *) fail "/bin/busybox is $busybox_mode - not executable" ;;
+  esac
+fi
+
+# Missing this doesn't fail the boot - mount(8) creates nothing - but every
+# write to /persistent then lands on the initramfs's tmpfs and vanishes.
+if ! exists "persistent"; then
+  fail "no /persistent mount point in the image - writes meant for the data disk would vanish on reboot"
+fi
+
 # `ip route add default` fails with EEXIST once any default route exists, so an
 # appliance that took a wired lease first keeps routing through the cable after
 # Wi-Fi comes up, and says nothing but "RTNETLINK answers: File exists".
